@@ -24,6 +24,8 @@ Read `results.tsv` (ground truth) and optionally `IDEA.md`. Construct the result
 
 If `IDEA.md` does not exist (e.g., `skip-scout` mode), construct context from `EXPERIMENT_SPEC.md` or `autoresearch.md`.
 
+Check `nanoresearch.json.scout_state.novelty_confidence`. If `"low"`, use cautious novelty language throughout (avoid strong novelty claims; frame contributions as empirical findings rather than novel methods).
+
 ## Mode Detection
 
 Check `nanoresearch.json`:
@@ -134,8 +136,8 @@ mcp__codex__codex:
     Paper facts:
     {paper_facts_packet}
 
-    Results data (ground truth):
-    {results.tsv content or relevant subset}
+    Results data (ground truth — filtered subset, max 15 rows):
+    {Include: baseline row (#0), best result row, and rows directly referenced by claims in this section. If the section references no specific experiments, include only baseline and best.}
 
     Previously drafted sections (for consistency checking):
     {list of completed section names + 2-3 bullet digest each}
@@ -163,7 +165,9 @@ mcp__codex__codex:
     Rules: max 500 words. Be specific and actionable. No praise. No listing things that are fine.
 ```
 
-**Codex fallback:** If Codex MCP unavailable OR `nanoresearch.json.codex == "off"`, spawn a Claude `write-critic` subagent in section mode with the same prompt content.
+**Codex fallback:** If Codex MCP unavailable OR `nanoresearch.json.codex == "off"`, spawn a Claude `write-critic` subagent in section mode with the same prompt content. Do NOT pass a `lens` parameter in section mode — section review applies all lenses comprehensively.
+
+**Review failure:** If per-section review fails after 1 Codex attempt + 1 Claude fallback attempt, log a warning to `paper/reviews/section-{idx}-{name}.md` with `REVIEW SKIPPED: [reason]` and advance to Step 4 with no blocking issues. The revision passes will catch issues later.
 
 ### Step 4: Fix and Advance
 
@@ -176,9 +180,10 @@ Update `write_state.current_section = i + 1`. Update `nanoresearch.json`.
 After all sections complete:
 
 1. Verify all section files exist and `main.tex` `\input` paths are correct.
-2. Clean `references.bib`: keep only cited entries.
-3. **Compile**: `cd paper && ${COMPILER} -pdf -interaction=nonstopmode main.tex`. Fix errors, retry up to MAX_COMPILE_ATTEMPTS. Compile failure is non-fatal — revision reviewers read `.tex` source.
-4. Transition: `write_state = {sub_phase: "revision", current_section: len(SECTION_ORDER), revision_pass: 0}`.
+2. **Cross-section consistency check:** Concatenate all section topic sentences and verify the narrative is coherent. Compare the claims-evidence matrix against actual claims in each section's final text. Flag any claim in a later section that contradicts an earlier section or doesn't appear in the matrix. Fix discrepancies before proceeding.
+3. Clean `references.bib`: keep only cited entries.
+4. **Compile**: `cd paper && ${COMPILER} -pdf -interaction=nonstopmode main.tex`. Fix errors, retry up to MAX_COMPILE_ATTEMPTS. Compile failure is non-fatal — revision reviewers read `.tex` source.
+5. Transition: `write_state = {sub_phase: "revision", current_section: len(SECTION_ORDER), revision_pass: 0}`.
 
 ## Sub-Phase 2: Revision Passes
 
@@ -255,10 +260,12 @@ In presentation pass: do not request major restructuring unless factual error.
 
 ### Synthesis
 
+Tag each review with its source: `[Claude-{lens}]` or `[GPT5.4-{lens}]` when collecting results.
+
 After collecting all reviews:
 
 1. **Deduplicate**: Group identical issues by location.
-2. **Prioritize**: Issues flagged by both model families in the same lens → must-fix. Issues flagged across 2+ lenses → must-fix. Single-reviewer stylistic nits → optional.
+2. **Prioritize**: Issues flagged by both model families in the same lens → must-fix. Issues flagged across 2+ lenses → must-fix. Any `CRITICAL` severity issue → must-fix (regardless of consensus). Single-reviewer stylistic nits → optional. **If `codex: off`** (all reviewers are Claude): replace the cross-model-family heuristic with "3+ of 8 reviewers → must-fix".
 3. **Conflict resolution**: When reviewers disagree, prefer the action that keeps the paper closer to results.tsv. Ties favor the shorter paper (cut over expand).
 4. **Produce**: Ordered fix list, mandatory items first.
 
@@ -283,9 +290,11 @@ Same two-sub-phase loop with these differences:
 
 1. **Additional inputs**: AUTO_REVIEW.md (full review history) and EXPERIMENT_SPEC.md `## Resubmission Requirements` section (structured AC requirements — this is the source of truth for what must be addressed).
 2. **Section drafting = section editing**: Each section is edited in-place, not rewritten. Per-section review prompt includes relevant reviewer feedback.
-3. **Targeted sections**: Determine impacted sections from AC requirements (in EXPERIMENT_SPEC.md) and new results.tsv rows. Always revisit: experiments, introduction, conclusion, abstract. Revisit method only if protocol changed. Revisit related_work only if positioning/novelty claim changed.
-4. **Dependency closure**: If experiments changes → force revisit introduction, conclusion, abstract. If method changes → force revisit experiments + all downstream.
-5. **Revision pass augmentation**: Pass 0 prompt adds: "Verify each resubmission requirement from EXPERIMENT_SPEC.md is addressed. Mark each as ADDRESSED or UNADDRESSABLE."
+3. **Targeted sections**: Determine impacted sections from AC requirements (in EXPERIMENT_SPEC.md) and new results.tsv rows. Compute the impacted set once at the start and persist in `write_state.impacted_sections` (array of SECTION_ORDER indices). Always revisit: experiments, introduction, conclusion, abstract. Revisit method only if protocol changed. Revisit related_work only if positioning/novelty claim changed.
+4. **Section skip**: When iterating through SECTION_ORDER, check if `i` is in `impacted_sections`. If not, skip: increment `current_section` and continue. Do not edit, review, or compile non-impacted sections.
+5. **Dependency closure**: If experiments changes → force revisit introduction, conclusion, abstract. If method changes → force revisit experiments + all downstream.
+6. **New results check**: Before entering revision mode editing, compare current `results.tsv` against the previous cycle. If no new `keep` rows were added and the AC's requirements specifically demanded new experiments, note this limitation explicitly in the paper ("We attempted X but found no improvement") rather than fabricating claims about nonexistent results.
+7. **Revision pass augmentation**: Pass 0 prompt adds: "Verify each resubmission requirement from EXPERIMENT_SPEC.md is addressed. Mark each as ADDRESSED or UNADDRESSABLE."
 
 Per-section review prompt addition for revision mode:
 ```

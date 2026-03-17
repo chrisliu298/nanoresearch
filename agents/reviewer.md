@@ -45,8 +45,10 @@ Scores 4-7 are typical. 5=borderline reject, 6=weak accept, 7=accept. Do not inf
 ### Significance (1-4)
 ### Novelty (1-4)
 ### Clarity (1-4)
-### Overall Score (1-10)
-### Confidence (1-5)
+### Overall Score
+[single integer 1-10 on its own line, nothing else]
+### Confidence
+[single integer 1-5 on its own line, nothing else]
 ### Strengths [ranked]
 ### Weaknesses [CRITICAL/MAJOR/MINOR, each with fix]
 ### Questions for Authors [numbered]

@@ -53,7 +53,7 @@ Check `nanoresearch.json.scout_state`:
 |-------|------|-----------|
 ```
 
-**Validation gate:** `LANDSCAPE.md` must contain at least 2 identifiable gaps and reference at least 5 papers. If not, retry survey with different query formulations (once). If still insufficient, proceed but mark novelty assessment as low-confidence.
+**Validation gate:** `LANDSCAPE.md` must contain at least 2 identifiable gaps and reference at least 5 papers. If not, retry survey with different query formulations (once). If still insufficient, proceed but set `scout_state.novelty_confidence: "low"` in `nanoresearch.json` (this propagates to write/review phases for cautious novelty claims). Default is `"high"` if the gate passes.
 
 Update `nanoresearch.json`: `scout_state.sub_phase: "ideate"`. Commit: `git add LANDSCAPE.md nanoresearch.json && git commit -m "scout: landscape survey"`.
 

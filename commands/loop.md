@@ -18,15 +18,21 @@ If `EXPERIMENT_SPEC.md` exists, read it for: metric, sanity metric, command, ext
 
 ### From autoresearch.md (resume)
 
-If `autoresearch.md` and `results.tsv` exist on a `nanoresearch/*` branch, AND `EXPERIMENT_SPEC.md` does NOT contain `## Rebuttal Addendum` or `## Resubmission Requirements`:
+If `autoresearch.md` and `results.tsv` exist on a `nanoresearch/*` branch:
+
+**Crash recovery (ALWAYS runs — including rebuttal/resubmission):**
 1. `git checkout nanoresearch/<tag>`
 2. Read `autoresearch.md` for context.
-3. **Check for interrupted exploration episode:** If `autoresearch.md` contains `## Active Exploration`, read the `start_commit` from that section. Reset to it: `git reset --hard <start_commit>`. Restore `.episode-bak` files if they exist (`mv results.tsv.episode-bak results.tsv` etc.). Remove the `## Active Exploration` section from `autoresearch.md`. Log: "Abandoned interrupted exploration episode."
-4. Read only the last `keep` row in `results.tsv` for the current best.
-5. **Verify HEAD is safe:** find the last `keep` row in `results.tsv` (if no `keep` row exists, use the baseline row #0). Check if that commit is an ancestor of HEAD: `git merge-base --is-ancestor <keep-commit> HEAD`. If YES → HEAD is safe (may be a checkpoint commit on top of the keep). If NO → crash left HEAD on an unevaluated or divergent commit; `git reset --hard <keep-commit>`.
-6. Read `git log --oneline -20`
-7. Read all in-scope files
-8. Continue the loop. Do not re-run baseline.
+3. **Check for pending revert:** If `.revert-pending` exists, a previous discard was interrupted. Read the target from `.revert-pending`. Restore backup files **idempotently** (check existence before each mv): `[ -f results.tsv.bak ] && mv results.tsv.bak results.tsv`, same for `autoresearch.md.bak`, `nanoresearch.json.bak`, `EXPERIMENT_SPEC.md.bak`. If a backup file is missing (already restored in a prior partial recovery), skip it. Remove `.revert-pending`. Clean up any remaining `.bak` files: `rm -f *.bak`. Log: "Recovered from interrupted revert."
+4. **Check for interrupted exploration episode:** If `autoresearch.md` contains `## Active Exploration`, read the `start_commit` from that section. Reset to it: `git reset --hard <start_commit>`. Restore `.episode-bak` files if they exist (`mv results.tsv.episode-bak results.tsv` etc.). Remove the `## Active Exploration` section from `autoresearch.md`. Log: "Abandoned interrupted exploration episode." **Skip step 5 after this** (HEAD is known-safe at the exploration start commit).
+5. **Verify HEAD is safe:** find the last `keep` row in `results.tsv` (if no `keep` row exists, use the baseline row #0). Check if that commit is an ancestor of HEAD: `git merge-base --is-ancestor <keep-commit> HEAD`. If YES → HEAD is safe (may be a checkpoint commit on top of the keep). If NO → crash left HEAD on an unevaluated or divergent commit; `git reset --hard <keep-commit>`. After any reset, verify `results.tsv` and `autoresearch.md` still exist — if destroyed, restore from git: `git show <keep-commit>:results.tsv > results.tsv`.
+
+**Resume context:**
+6. Read only the last `keep` row in `results.tsv` for the current best.
+7. Read `git log --oneline -20`
+8. Read all in-scope files
+9. If `EXPERIMENT_SPEC.md` contains `## Rebuttal Addendum` or `## Resubmission Requirements` → enter fresh-from-spec mode (re-read spec for new objectives, skip baseline if results.tsv has one, but DO NOT skip crash recovery above).
+10. Continue the loop. Do not re-run baseline.
 
 ### Interactive (standalone)
 
@@ -38,7 +44,7 @@ If neither exists, establish with the user: metric (with direction), command, me
 2. **Clean tree check**: If `git status --porcelain` is non-empty AND this is NOT a rebuttal/resubmission invocation (i.e., `EXPERIMENT_SPEC.md` does NOT contain `## Rebuttal Addendum` or `## Resubmission Requirements`), `git stash push -m 'nanoresearch: pre-loop'`. Pop stash after loop completes. Skip stash for rebuttal/resubmission — the caller manages the working tree.
 3. Read every in-scope file AND relevant read-only files.
 4. **Preflight**: Verify: (a) data files in EXPERIMENT_SPEC.md exist and are non-empty, (b) command is executable (`command -v`), (c) required packages importable, (d) `timeout` command exists — if not, check for `gtimeout` (macOS with coreutils) and alias it. If any fail → fix or set `status: "failed"` and stop.
-5. Add `run.log` to `.gitignore` if not present. Commit.
+5. Add `run.log`, `.revert-pending`, `*.bak`, `*.episode-bak` to `.gitignore` if not present. Commit.
 6. If `results.tsv` already exists and contains a baseline row (experiment #0), do NOT overwrite — append after existing rows and skip baseline (step 7). Otherwise create with header.
 7. Run **baseline**: execute the command as-is. Record as experiment #0. If baseline crashes: diagnose from `run.log`, fix environment (not in-scope code), retry up to 3 times. If still failing → set `status: "failed"` in `nanoresearch.json` and stop.
 8. Write `autoresearch.md` (recovery doc). Commit it.
@@ -58,9 +64,9 @@ If neither exists, establish with the user: metric (with direction), command, me
 
 **LOOP** until budget expires, iteration cap reached, or manually stopped.
 
-**Budget detection:** If `nanoresearch.json` exists with `phase: "loop"`, read `EXPERIMENT_BUDGET_HOURS` from CLAUDE.md. Check `$(date +%s)` against start time before each iteration. When budget expires, finish current experiment and stop. Reject zero or negative budgets up front.
+**Budget detection:** Record `loop_started_at = $(date +%s)` on first entry. If `nanoresearch.json` exists, persist `loop_started_at` in it (if already present, reuse the stored value — do not reset on resume). Check `$(date +%s)` against `loop_started_at` before each iteration. When budget expires, finish current experiment and stop. Reject zero or negative budgets up front.
 
-**Argument-based bounds:** If invoked with a number N, run exactly N iterations. If invoked with a duration (e.g., `30m`, `2h`), use that as wall-clock budget.
+**Argument-based bounds (highest precedence):** If invoked with a number N, run exactly N iterations. If invoked with a duration (e.g., `30m`, `2h`), use that as wall-clock budget. **Explicit argument overrides `EXPERIMENT_BUDGET_HOURS` from CLAUDE.md.** If no argument, fall back to `EXPERIMENT_BUDGET_HOURS`.
 
 **Timeout clamping:** Each run uses `timeout min(TIMEOUT_MINUTES, remaining_budget_minutes)m <command>`. Do not start a new iteration if remaining budget is zero.
 
@@ -80,7 +86,13 @@ Each iteration:
     - Equal or worse → `discard`.
     - Equal + simpler code → `keep` (simplicity criterion).
     - Crash → triage: trivial bug → fix+retry (max 2); environment → remediate; idea-breaking → skip.
-    **On discard/revert:** Back up uncommitted state first: `cp results.tsv results.tsv.bak && cp autoresearch.md autoresearch.md.bak && cp nanoresearch.json nanoresearch.json.bak`. Then `git reset --hard HEAD~1`. Then restore: `mv results.tsv.bak results.tsv && mv autoresearch.md.bak autoresearch.md && mv nanoresearch.json.bak nanoresearch.json`.
+    **On discard/revert:** Crash-safe revert protocol:
+    1. Back up all state files: `cp results.tsv results.tsv.bak && cp autoresearch.md autoresearch.md.bak && cp nanoresearch.json nanoresearch.json.bak && cp EXPERIMENT_SPEC.md EXPERIMENT_SPEC.md.bak`.
+    2. Write sentinel: `echo "HEAD~1" > .revert-pending`.
+    3. Reset: `git reset --hard HEAD~1`.
+    4. Restore: `mv results.tsv.bak results.tsv && mv autoresearch.md.bak autoresearch.md && mv nanoresearch.json.bak nanoresearch.json && mv EXPERIMENT_SPEC.md.bak EXPERIMENT_SPEC.md`.
+    5. Remove sentinel: `rm -f .revert-pending`.
+    If the process crashes between steps 2-4, the resume logic detects `.revert-pending` and completes the restore.
 11. **Report.** Every 5 iterations: `=== Iteration N: metric at X.XX, K/D/C ===`
 12. **Update `autoresearch.md`** every ~5 experiments.
 13. **Checkpoint.** Every 10 iterations: `git add results.tsv autoresearch.md && git commit -m "loop: checkpoint at iteration N"`. This makes progress durable for preemptible machines.
@@ -96,12 +108,12 @@ Each iteration:
 
 Some improvements require 2-3 coordinated edits that look bad individually. When you have a hypothesis that needs multiple steps:
 
-1. **Start an exploration episode.** Record `exploration_start_commit = HEAD` and `exploration_budget = 3` (max commits in the episode). **Persist to `autoresearch.md`** under `## Active Exploration`: start commit hash, budget, and hypothesis. Back up state files before the first step: `cp results.tsv results.tsv.episode-bak && cp autoresearch.md autoresearch.md.episode-bak && cp nanoresearch.json nanoresearch.json.episode-bak`.
+1. **Start an exploration episode.** Record `exploration_start_commit = HEAD` and `exploration_budget = 3` (max commits in the episode). **Persist to `autoresearch.md`** under `## Active Exploration`: start commit hash, budget, and hypothesis. Back up state files before the first step: `cp results.tsv results.tsv.episode-bak && cp autoresearch.md autoresearch.md.episode-bak && cp nanoresearch.json nanoresearch.json.episode-bak && cp EXPERIMENT_SPEC.md EXPERIMENT_SPEC.md.episode-bak`.
 2. **Commit each step** normally (steps 1-4 of the loop), but **skip steps 5-10** (Run through Decide) for intermediate commits. Do NOT log intermediate steps to `results.tsv` — keep episode-internal notes in `autoresearch.md` only.
 3. **Evaluate at the episode end** (after all steps are committed, or after the exploration budget is exhausted). Run the command once and extract metrics. Record a single row in `results.tsv` with the episode's final metric and a description summarizing all steps.
 4. **Decide on the whole episode:**
-   - Improved → `keep` (all commits stay). Remove `## Active Exploration` from `autoresearch.md`. Delete `.episode-bak` files.
-   - Not improved → `discard` the entire episode: restore from episode backups (`mv results.tsv.episode-bak results.tsv && mv autoresearch.md.episode-bak autoresearch.md && mv nanoresearch.json.episode-bak nanoresearch.json`), then `git reset --hard <exploration_start_commit>`.
+   - Improved → `keep` (all commits stay). Remove `## Active Exploration` from `autoresearch.md`. Clean up: `rm -f *.episode-bak`.
+   - Not improved → `discard` the entire episode: restore from episode backups (`mv results.tsv.episode-bak results.tsv && mv autoresearch.md.episode-bak autoresearch.md && mv nanoresearch.json.episode-bak nanoresearch.json && mv EXPERIMENT_SPEC.md.episode-bak EXPERIMENT_SPEC.md`), then `git reset --hard <exploration_start_commit>`. Clean up: `rm -f *.episode-bak`.
 5. **Limit:** Max 1 exploration episode per 5 total iterations (counting episode commits toward the 5). Do not start an episode if it would span a checkpoint boundary (iteration divisible by 10). Defer to after the checkpoint.
 
 **Crash recovery:** On resume, if `autoresearch.md` contains `## Active Exploration`, an episode was interrupted. Read the `start_commit` from that section. Reset to it: `git reset --hard <start_commit>`, restore `.episode-bak` files if they exist, remove `## Active Exploration`. The episode is abandoned — it can be retried from scratch.

@@ -12,24 +12,43 @@ Research topic: **$ARGUMENTS**
 
 Read all constants from this project's **CLAUDE.md** before proceeding. Read the state schema and file contracts.
 
-## Resumption
+## Startup
+
+### Override Parsing (FIRST — before any cleanup or resumption)
+
+Parse `$ARGUMENTS` by splitting on ` — `. First segment = topic. Subsequent segments are `key: value` pairs or bare flags. Parse from the end: only segments matching a known override key or flag are overrides. Everything before the first valid override is the topic. Reject unknown keys silently. Echo applied config at startup. Persist `budget` and `loop` overrides into `nanoresearch.json` on creation so they survive resume.
+
+| Override | Effect |
+|----------|--------|
+| `budget: Nh` | Override EXPERIMENT_BUDGET_HOURS |
+| `loop: N` | Bound experiment loop to N iterations |
+| `venue: NeurIPS` | Store in nanoresearch.json, passed to write and review |
+| `skip-scout` | Start from Phase 2. Set `phase: "loop"`, `idea_summary: "N/A"` in nanoresearch.json. Requires EXPERIMENT_SPEC.md. |
+| `skip-to-write` | Start from Phase 3. Set `phase: "write"`, `idea_summary: "N/A"` in nanoresearch.json. Requires results.tsv. Parse results.tsv for `best_metric` and `iteration_count`. |
+| `codex: off` | Store in nanoresearch.json. All Codex MCP calls replaced with Claude self-prompting. |
+
+### Resumption
 
 Check for `nanoresearch.json` in the project root:
 - If absent → **fresh start**.
-- If present but invalid JSON → rename to `nanoresearch.json.bak`, warn, **fresh start**.
+- If present but invalid JSON → rename to `nanoresearch.json.bak`, warn. Attempt recovery: check for a `nanoresearch/*` branch matching the topic, and reconstruct state from branch artifacts. If recovery fails → **fresh start**.
 - If `status` is `"completed"` or `"failed"` → **fresh start**.
 - If `status` is `"in_progress"` AND `timestamp` > 24 hours old → **fresh start** (stale).
 - If `status` is `"in_progress"` AND topic does NOT match `$ARGUMENTS` → **error**: "Another run in progress for '[topic]'. Complete or delete nanoresearch.json first."
 - If `status` is `"in_progress"` AND topic matches AND within 24 hours → **resume** from recorded phase.
 
 **On fresh start:**
-1. Clean stale artifacts: `rm -f LANDSCAPE.md IDEA.md EXPERIMENT_SPEC.md results.tsv autoresearch.md AUTO_REVIEW.md RESEARCH_MEMO.md SCOPING_MEMO.md && rm -rf paper/`.
-2. Create `nanoresearch.json` per the state schema: `topic: "<parsed topic from $ARGUMENTS>"`, `status: "in_progress"`, `phase: "scout"`, `branch: "nanoresearch/<tag>"`, `timestamp: <now ISO 8601>`, `venue: null`, `codex: "on"`, `decision: null`, `scout_state: {sub_phase: "survey"}`.
-3. Resolve the default branch (`git symbolic-ref refs/remotes/origin/HEAD` or fall back to `main`). Then `git checkout -b nanoresearch/<tag> <default-branch>` (tag = date, e.g., `mar16`). If branch exists, append sequence number: `mar16-2`.
+1. Resolve the default branch (`git symbolic-ref refs/remotes/origin/HEAD` or fall back to `main`). Then `git checkout -b nanoresearch/<tag> <default-branch>` (tag = date, e.g., `mar16`). If branch exists, append sequence number: `mar16-2`. **Branch first, clean second** — never delete artifacts on the user's current branch.
+2. Clean stale artifacts on the new branch, preserving files required by active skip flags:
+   - If `skip-scout`: preserve `EXPERIMENT_SPEC.md`.
+   - If `skip-to-write`: preserve `EXPERIMENT_SPEC.md`, `results.tsv`, `autoresearch.md`.
+   - Default (no skip): `rm -f LANDSCAPE.md IDEA.md EXPERIMENT_SPEC.md results.tsv autoresearch.md AUTO_REVIEW.md RESEARCH_MEMO.md SCOPING_MEMO.md && rm -rf paper/`.
+   - Always clean crash-recovery artifacts: `rm -f .revert-pending *.bak *.episode-bak nanoresearch.json`.
+3. Create `nanoresearch.json` per the state schema: `topic`, `status: "in_progress"`, `phase` (set by skip flag or `"scout"`), `branch: "nanoresearch/<tag>"`, `timestamp: <now ISO 8601>`, `venue`, `codex`, `decision: null`, `budget_override` (if set), `loop_override` (if set), `scout_state: {sub_phase: "survey", novelty_confidence: "high"}` (if phase is scout).
 
 **On resume:**
 1. Read `branch` from `nanoresearch.json`.
-2. `git checkout <branch>` (not `-b`).
+2. `git checkout <branch>` (not `-b`). Verify current branch matches `nanoresearch.json.branch` — if not, warn and switch.
 3. Update `timestamp` to now.
 4. If resuming `phase: "scout"` → check `scout_state.sub_phase`. If `"survey"`, clean all: `rm -f LANDSCAPE.md IDEA.md EXPERIMENT_SPEC.md SCOPING_MEMO.md`. If `"ideate"`, preserve `LANDSCAPE.md`, clean: `rm -f IDEA.md EXPERIMENT_SPEC.md SCOPING_MEMO.md`. If `"specify"`, preserve `LANDSCAPE.md` and `IDEA.md`, clean: `rm -f EXPERIMENT_SPEC.md SCOPING_MEMO.md`.
 5. Jump to the recorded phase.
@@ -54,9 +73,9 @@ Update `nanoresearch.json`: `phase: "loop"`, `idea_summary: [title]`, `timestamp
 
 **Precondition:** `EXPERIMENT_SPEC.md` exists. If missing, set `status: "failed"` and stop.
 
-Invoke `/nanoresearch:loop` with the appropriate budget:
-- If `budget` override specified → `/nanoresearch:loop <budget value>` (e.g., `/nanoresearch:loop 8h`)
-- If `loop` override specified → `/nanoresearch:loop <N>` (e.g., `/nanoresearch:loop 50`)
+Invoke `/nanoresearch:loop` with the appropriate budget (check CLI overrides first, then `nanoresearch.json.budget_override`/`loop_override` for resumed runs, then defaults):
+- If `budget` override (CLI or persisted) → `/nanoresearch:loop <budget value>` (e.g., `/nanoresearch:loop 8h`)
+- If `loop` override (CLI or persisted) → `/nanoresearch:loop <N>` (e.g., `/nanoresearch:loop 50`)
 - Otherwise → `/nanoresearch:loop ${EXPERIMENT_BUDGET_HOURS}h`
 
 The loop reads `EXPERIMENT_SPEC.md` for setup, runs the autoresearch protocol (edit→commit→run→measure→keep/revert) until the budget is exhausted.
@@ -69,13 +88,13 @@ Update `nanoresearch.json`: `phase: "write"`, `best_metric: [value]`, `iteration
 
 **Precondition:** `results.tsv` exists with at least 2 rows (header + baseline). If missing, set `status: "failed"` and stop.
 
-Reset `write_state: {sub_phase: "section_drafting", current_section: 0, revision_pass: 0}` in `nanoresearch.json` (always reset on phase entry, not "if not already present" — ensures clean state for both initial write and resubmission cycles).
+**Write state management:** If `write_state` is absent or `write_state.sub_phase == "complete"`, reset to `{sub_phase: "section_drafting", current_section: 0, revision_pass: 0, impacted_sections: null}` (fresh entry from loop). If `write_state` exists with `sub_phase != "complete"`, preserve it (crash resume — write.md handles resumption). The resubmission path (Phase 4) handles its own write_state reset before re-invoking write.
 
 Invoke `/nanoresearch:write`.
 
 If write produces `RESEARCH_MEMO.md` → update `nanoresearch.json`: `status: "completed"`, `phase: "completed"`, `decision: "memo"`. `git add RESEARCH_MEMO.md nanoresearch.json && git commit -m "write: research memo"`. Print summary and stop. (Memos skip review.)
 
-Update `nanoresearch.json`: `phase: "review"`, `timestamp: <now>`, `review_state: {cycle: 1, sub_phase: "initial_review", decision: null, codex_threads: {}, scores: {initial: {}, post_rebuttal: {}}, score_history: []}`.
+Update `nanoresearch.json`: `phase: "review"`, `timestamp: <now>`, `review_state: {cycle: 1, sub_phase: "initial_review", decision: null, codex_threads: {}, reviewer_dispatch: {}, scores: {initial: {}, post_rebuttal: {}}, score_history: []}`.
 
 **Commit:** `git add paper/ nanoresearch.json && git commit -m "write: paper draft"`.
 
@@ -92,13 +111,19 @@ Update `nanoresearch.json`: `phase: "review"`, `timestamp: <now>`, `review_state
    - **"rejected"** → check bounds:
      - If `review_state.cycle >= MAX_REVIEW_CYCLES` → break.
      - Otherwise → **revise and resubmit:**
-       1. The review command has already patched `EXPERIMENT_SPEC.md` with resubmission requirements.
-       2. Increment `review_state.cycle`. Reset cycle-local fields: `review_state.sub_phase: "initial_review"`, `review_state.decision: null`, `review_state.codex_threads: {}`, `review_state.scores: {initial: {}, post_rebuttal: {}}`. (Write uses `cycle > 1` to detect revision mode, not `decision`.)
-       3. Re-invoke `/nanoresearch:loop ${RESUBMISSION_EXPERIMENT_BUDGET_MINUTES}m`. The loop detects `## Resubmission Requirements` in `EXPERIMENT_SPEC.md` and enters fresh-from-spec mode.
-       4. Re-invoke `/nanoresearch:write` (write detects revision mode from `review_state.cycle > 1`).
-       5. `git add paper/ results.tsv autoresearch.md nanoresearch.json && git commit -m "revise: cycle [N]"`. Continue loop.
+       1. **Validate:** Verify `EXPERIMENT_SPEC.md` contains `## Resubmission Requirements`. If absent, re-read `AUTO_REVIEW.md` for the AC's requirements, patch `EXPERIMENT_SPEC.md`, and commit. If requirements are still missing or vague (fewer than 2 actionable items), set `status: "failed"` and stop.
+       2. Increment `review_state.cycle`. Reset cycle-local fields: `review_state.sub_phase: "initial_review"`, `review_state.decision: null`, `review_state.codex_threads: {}`, `review_state.reviewer_dispatch: {}`, `review_state.scores: {initial: {}, post_rebuttal: {}}`. (Write uses `cycle > 1` to detect revision mode, not `decision`.)
+       3. **Phase transition → loop:** Update `phase: "loop"`, `timestamp: <now>`. `git add nanoresearch.json EXPERIMENT_SPEC.md && git commit -m "revise: resubmission setup cycle [N]"`.
+       4. Re-invoke `/nanoresearch:loop ${RESUBMISSION_EXPERIMENT_BUDGET_MINUTES}m`. The loop detects `## Resubmission Requirements` in `EXPERIMENT_SPEC.md` and enters fresh-from-spec mode.
+       5. **Phase transition → write:** Parse `results.tsv` to update `best_metric` and `iteration_count`. Update `phase: "write"`, `timestamp: <now>`. Reset `write_state: {sub_phase: "section_drafting", current_section: 0, revision_pass: 0, impacted_sections: null}`. Record `results_row_at_cycle_start` (current row count of `results.tsv`). Preserve `score_history` (do NOT reset — it accumulates across cycles). `git add nanoresearch.json results.tsv autoresearch.md && git diff --cached --quiet || git commit -m "revise: loop complete cycle [N]"`.
+       6. Re-invoke `/nanoresearch:write` (write detects revision mode from `review_state.cycle > 1`).
+       7. **Phase transition → review:** Update `phase: "review"`, `timestamp: <now>`. `git add paper/ nanoresearch.json && git commit -m "revise: paper revised cycle [N]"`. Continue loop.
 
 Update `nanoresearch.json`: `status: "completed"`, `phase: "completed"`, `decision: "accepted"/"rejected"`, `timestamp: <now>`.
+
+**Commit:** `git add nanoresearch.json && git commit -m "nanoresearch: completed ([decision])"`.
+
+**On any `status: "failed"` exit:** always commit: `git add nanoresearch.json && git commit -m "nanoresearch: failed at [phase]"`.
 
 ### Phase 5: Summary
 
@@ -112,19 +137,6 @@ Output: paper/main.pdf | RESEARCH_MEMO.md
 Decision: [decision] — [avg score]/10 after [N] cycle(s)
 Duration: [total time]
 ```
-
-## Inline Overrides
-
-Parse `$ARGUMENTS` by splitting on ` — `. First segment = topic. Subsequent segments are either `key: value` pairs or bare flags (`skip-scout`, `skip-to-write`). Parse from the end: only segments matching a known override key or flag are treated as overrides. Everything before the first valid override is the topic. Reject unknown keys silently. Echo applied config at startup.
-
-| Override | Effect |
-|----------|--------|
-| `budget: Nh` | Override EXPERIMENT_BUDGET_HOURS |
-| `loop: N` | Bound experiment loop to N iterations |
-| `venue: NeurIPS` | Store in nanoresearch.json, passed to write and review |
-| `skip-scout` | Start from Phase 2. Set `phase: "loop"`, `idea_summary: "N/A"` in nanoresearch.json. Requires EXPERIMENT_SPEC.md. |
-| `skip-to-write` | Start from Phase 3. Set `phase: "write"`, `idea_summary: "N/A"` in nanoresearch.json. Requires results.tsv. Parse results.tsv for `best_metric` and `iteration_count`. |
-| `codex: off` | Store in nanoresearch.json. All Codex MCP calls replaced with Claude self-prompting. |
 
 ## Rules
 

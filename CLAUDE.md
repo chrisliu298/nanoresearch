@@ -46,6 +46,14 @@ The algorithm of research is `propose → evaluate → keep/discard`, applied at
 
 - **EXPERIMENT_BUDGET_HOURS = 4** — Default wall-clock budget for the experiment loop in the full pipeline. Override: `— budget: Nh`.
 - **AUTO_PROCEED = true** — Do not block on checkpoints. Never wait for user input.
+- **CODEX_CALL_TIMEOUT_MINUTES = 10** — If a `mcp__codex__codex` call does not return within this time, fall back to a Claude subagent with the same prompt.
+
+### codex: off Mode
+
+When `codex: off`, all Codex MCP calls are replaced with Claude subagents. This eliminates cross-model diversity. Adjust synthesis rules:
+- Write revision panel: replace "issues flagged by both model families → must-fix" with "issues flagged by 3+ of 8 reviewers → must-fix".
+- Review panel: all 4 reviewers are Claude; use persona diversity as the discriminating signal, not model family.
+- Tag each review output with `[Claude-{persona/lens}]` for tracking.
 
 ## State Schema (nanoresearch.json)
 
@@ -63,21 +71,28 @@ iteration_count: number               # set after loop
 venue: string | null                   # from override, passed to write and review
 codex: "on" | "off"                    # from override, default "on"
 decision: "accepted" | "rejected" | "memo" | null
+budget_override: string | null         # persisted from override (e.g., "8h"), survives resume
+loop_override: number | null           # persisted from override (e.g., 50), survives resume
+loop_started_at: ISO 8601 | null       # set on first loop entry, preserved on resume, used for budget tracking
 scout_state: {                         # initialized on phase: "scout" entry
   sub_phase: "survey" | "ideate" | "specify",
+  novelty_confidence: "high" | "low",  # "low" if web search failed or <5 papers found
 }
-write_state: {                         # initialized on phase: "write" entry
+write_state: {                         # initialized on phase: "write" entry; reset on fresh entry, preserved on crash resume
   sub_phase: "section_drafting" | "revision" | "complete",
   current_section: number,             # 0-indexed, tracks section_drafting progress
   revision_pass: number,               # 0-indexed, incremented after each completed pass, max NUM_REVISION_PASSES
+  impacted_sections: [number] | null,  # revision mode only: indices into SECTION_ORDER to revisit
 }
 review_state: {                        # initialized on phase: "review" entry
   cycle: number,                       # starts at 1, incremented on resubmission
   sub_phase: "initial_review" | "rebuttal_triage" | "rebuttal_experiments" | "rebuttal_revision" | "rebuttal_response" | "rescoring" | "area_chair" | "decision_gate",
   decision: "accepted" | "rejected" | null,  # per-cycle decision from AC
-  codex_threads: {R3?: string, R4?: string},  # present only when Codex used
+  codex_threads: {R3?: string, R4?: string},  # present only when Codex used; saved incrementally per reviewer
+  reviewer_dispatch: {R1..R4: "claude" | "codex" | "claude-fallback"},  # actual dispatch method per reviewer
   scores: {initial: {R1..R4: number}, post_rebuttal: {R1..R4: number}},
-  score_history: [{cycle, avg, decision}]
+  score_history: [{cycle, avg, decision}],
+  results_row_at_cycle_start: number | null,  # row count of results.tsv when this review cycle began; used to identify new evidence
 }
 ```
 
