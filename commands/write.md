@@ -9,7 +9,7 @@ Two-sub-phase writing loop: section-by-section drafting with per-section review,
 
 Read from **CLAUDE.md**: COMPILER, MAX_COMPILE_ATTEMPTS, NUM_REVISION_PASSES, REVISION_PANEL, SECTION_REVIEW_EFFORT.
 
-Before composing any Codex MCP prompt, read **docs/prompting-codex.md** for model-specific patterns (XML tags, output contracts, verification loops) that improve GPT-5.4 output quality.
+Before composing Codex prompts, read **docs/prompting-codex.md**.
 
 ## Constants
 
@@ -45,7 +45,7 @@ Check `nanoresearch.json.write_state`:
   - If `write_state.sub_phase == "section_drafting"` → resume at `current_section`. Sections with existing `.tex` files at indices < `current_section` are kept.
   - If `write_state.sub_phase == "revision"` → resume at `revision_pass`.
 
-**Revision mode pre-flight (MANDATORY — runs on every entry, not just resume):** If `review_state` exists and `review_state.cycle > 1` (revision mode) and `write_state.sub_phase == "section_drafting"` and `impacted_sections` is null → recompute `impacted_sections` from AC requirements in `EXPERIMENT_SPEC.md` and new `results.tsv` rows. Persist immediately: update `nanoresearch.json` and commit (`git add nanoresearch.json && git commit -m "write: computed impacted sections"`). Never iterate sections with null `impacted_sections` in revision mode (would skip all sections or crash). Once set, `impacted_sections` must not be recomputed — use the persisted value.
+**Revision mode pre-flight:** If revision mode (`review_state.cycle > 1`) and `impacted_sections` is null → recompute from AC requirements and new results.tsv rows. Persist and commit immediately. Never iterate with null `impacted_sections` in revision mode.
 
 Detect revision mode from `review_state.cycle > 1`, not from write_state. The orchestrator resets `write_state` when entering a new write cycle after rejection.
 
@@ -115,7 +115,7 @@ Create `paper/main.tex` + `paper/sections/*.tex` stubs + `paper/references.bib` 
 
 Draft sections in SECTION_ORDER: **method → experiments → related_work → introduction → conclusion → abstract**.
 
-Evidence-bearing sections first (method, experiments) anchor the paper. Introduction and abstract are written after the core to prevent claim drift.
+Evidence-bearing sections first; introduction and abstract written last.
 
 For each section at index `i`:
 
@@ -142,7 +142,7 @@ For related_work and any section needing citations:
 
 ### Step 3: Per-Section Review
 
-Submit section to GPT-5.4 via `mcp__codex__codex` at `xhigh` effort (the only permitted effort level — no other level is allowed). **Codex timeout:** If the call does not return within `CODEX_CALL_TIMEOUT_MINUTES` (10 minutes), treat it as a failure and fall back to Claude `write-critic` subagent. Use XML-tagged prompt per `docs/prompting-codex.md`:
+Submit section to GPT-5.4 via `mcp__codex__codex` at `xhigh`. Apply `CODEX_CALL_TIMEOUT_MINUTES` fallback to Claude `write-critic` subagent if timeout. Use XML-tagged prompt per `docs/prompting-codex.md`:
 
 ```xml
 <goal>
@@ -203,9 +203,9 @@ Before finalizing:
 </verification_loop>
 ```
 
-**Codex fallback:** If Codex MCP unavailable OR `nanoresearch.json.codex == "off"`, spawn a Claude `write-critic` subagent in section mode with the same prompt content. Do NOT pass a `lens` parameter in section mode — section review applies all lenses comprehensively.
+**Codex fallback:** If Codex unavailable or `codex: off`, spawn Claude `write-critic` subagent in section mode.
 
-**Review failure:** If per-section review fails after 1 Codex attempt + 1 Claude fallback attempt, log a warning to `paper/reviews/section-{idx}-{name}.md` with `REVIEW SKIPPED: [reason]` and advance to Step 4 with no blocking issues. The revision passes will catch issues later.
+**Review failure:** After Codex + Claude fallback both fail, log `REVIEW SKIPPED` and advance. Revision passes catch issues later.
 
 ### Step 4: Fix, Commit, and Advance
 
@@ -213,14 +213,14 @@ Fix all blocking issues. One review round per section — do not re-review. Non-
 
 Update `write_state.current_section = i + 1`. Update `nanoresearch.json`.
 
-**Per-section checkpoint commit:** `git add paper/sections/{name}.tex paper/reviews/section-{idx}-{name}.md nanoresearch.json && git commit -m "write: drafted {name}"`. This makes section drafting crash-safe — a crash only loses the current section, not all prior sections.
+**Per-section checkpoint commit:** `git add paper/sections/{name}.tex paper/reviews/section-{idx}-{name}.md nanoresearch.json && git commit -m "write: drafted {name}"`.
 
 ### Post-Drafting
 
 After all sections complete:
 
 1. Verify all section files exist and `main.tex` `\input` paths are correct.
-2. **Cross-section consistency check:** Concatenate all section topic sentences and verify the narrative is coherent. Compare the claims-evidence matrix against actual claims in each section's final text. Flag any claim in a later section that contradicts an earlier section or doesn't appear in the matrix. Fix discrepancies before proceeding.
+2. **Cross-section consistency check:** Verify claims-evidence matrix matches actual section claims. Fix contradictions and unsupported claims.
 3. Clean `references.bib`: keep only cited entries.
 4. **Compile**: `cd paper && ${COMPILER} -pdf -interaction=nonstopmode main.tex`. Fix errors, retry up to MAX_COMPILE_ATTEMPTS. Compile failure is non-fatal — revision reviewers read `.tex` source.
 5. Transition: `write_state = {sub_phase: "revision", current_section: len(SECTION_ORDER), revision_pass: 0}`.
@@ -245,9 +245,9 @@ For each pass, launch 8 reviewers in parallel:
 **4 Claude write-critic subagents** (`run_in_background: true`):
 - Each spawned with the `write-critic` agent, a different lens from REVISION_LENSES, and the pass focus.
 
-**4 GPT-5.4 via Codex MCP** (4 separate `mcp__codex__codex` calls at `xhigh` — the only permitted effort level). **Codex timeout:** If any call does not return within `CODEX_CALL_TIMEOUT_MINUTES` (10 minutes), treat it as a failure and replace with Claude `write-critic` subagent using the same lens:
+**4 GPT-5.4 via Codex MCP** (4 separate `mcp__codex__codex` calls at `xhigh`). Apply `CODEX_CALL_TIMEOUT_MINUTES` fallback to Claude `write-critic` subagent:
 - Each assigned a lens from REVISION_LENSES.
-- Fresh `mcp__codex__codex` call per pass (no thread continuity between passes — different pass foci would contaminate each other).
+- Fresh call per pass (no thread continuity between passes).
 
 Each reviewer receives:
 - Full paper `.tex` source (all sections concatenated)
@@ -304,12 +304,11 @@ Drop any issue you cannot ground in the provided text.
 </verification_loop>
 ```
 
-**Save each reviewer's output** to `paper/reviews/cycle-{C}/revision-pass-{n}/slot-{K}-{lens}.md` where `C = review_state.cycle` if `review_state` exists, otherwise `1`, and `K` is a stable slot number 1-8 (slots 1-4 are initially Claude, slots 5-8 are initially Codex; fallback does NOT change the slot number). For example: `paper/reviews/cycle-1/revision-pass-0/slot-1-evidence.md`. Tag each review with its actual source: `[Claude-{lens}]` or `[GPT5.4-{lens}]`. Cycle-scoping prevents resubmission cycles from reusing stale prior-cycle reviews. On resume, check which reviewer outputs already exist in the current cycle's pass directory. **Validate each cached file:** must be > 100 bytes and contain expected headings (`## Issues` or `No issues found`). If validation fails, delete the file and re-dispatch that reviewer. Skip re-dispatching only reviewers with valid cached output.
+**Save each reviewer's output** to `paper/reviews/cycle-{C}/revision-pass-{n}/slot-{K}-{lens}.md` (C from `review_state.cycle` or `1`; K = stable slot 1-8, unchanged by fallback). Tag with `[Claude-{lens}]` or `[GPT5.4-{lens}]`. On resume, reuse valid cached outputs (> 100 bytes, correct headings); re-dispatch invalid ones.
 
-### Panel Failure Handling
+### Panel Failure
 
-- Retry failed Codex calls once. If still failing, replace with Claude `write-critic` subagent using same lens.
-- Minimum panel = 4 of 8. Below 4, retry all failed reviewers once more. If still below 4, proceed with available reviews and log warning.
+Retry failed Codex once → Claude fallback. Minimum panel = 4 of 8; below 4, proceed with warning.
 
 ### Synthesis
 
@@ -318,7 +317,7 @@ Tag each review with its source: `[Claude-{lens}]` or `[GPT5.4-{lens}]` when col
 After collecting all reviews:
 
 1. **Deduplicate**: Group identical issues by location.
-2. **Prioritize**: **If cross-model diversity exists** (NOT `codex: off` AND successful panel contains both `[Claude-{lens}]` and `[GPT5.4-{lens}]` tags): issues flagged by both slot-pair reviewers assigned to the same lens (regardless of whether one fell back from Codex to Claude) → must-fix. Issues flagged across 2+ lenses → must-fix. Any `CRITICAL` severity issue → must-fix (regardless of consensus). Single-reviewer stylistic nits → optional. **If `codex: off`** OR if all successful write-panel reviewers are the same model family (determine from the `[Claude-{lens}]` / `[GPT5.4-{lens}]` tags on collected results — do NOT use `review_state.effective_synthesis_mode`, which reflects the peer-review panel, not the write-critic panel): **disable the slot-pair 2-of-2 rule** and use only "3+ of N successful panel reviewers → must-fix" (e.g., 3+ of 8 at full panel, 3+ of 5 at minimum panel). CRITICAL severity issues remain must-fix regardless. **Degenerate panel fallback:** If the successful panel size is less than 3, lower the must-fix threshold: any issue flagged by 2+ reviewers → must-fix; if only 1 reviewer succeeded, all CRITICAL and MAJOR issues from that reviewer are must-fix.
+2. **Prioritize**: CRITICAL severity → always must-fix. **If cross-model diversity exists** (panel has both `[Claude-{lens}]` and `[GPT5.4-{lens}]` tags): same-lens slot-pair agreement OR 2+ lenses → must-fix. **If same model family** (`codex: off` or all fallbacks): 3+ of N reviewers → must-fix. **Degenerate panel** (<3 reviewers): 2+ → must-fix; single reviewer: CRITICAL and MAJOR are must-fix.
 3. **Conflict resolution**: When reviewers disagree, prefer the action that keeps the paper closer to results.tsv. Ties favor the shorter paper (cut over expand).
 4. **Produce**: Ordered fix list, mandatory items first.
 
@@ -328,7 +327,7 @@ After collecting all reviews:
 2. Compile: `${COMPILER} -pdf -interaction=nonstopmode main.tex`. Retry up to MAX_COMPILE_ATTEMPTS.
 3. After the presentation pass (pass index 1): run format check — overfull hboxes, page count, undefined refs/citations.
 4. Update `write_state.revision_pass = pass + 1`. Update `nanoresearch.json`.
-5. **Per-pass checkpoint commit:** `git add paper/ nanoresearch.json && git commit -m "write: revision pass {n} complete"`. This prevents crash between passes from losing an entire 8-reviewer panel's worth of edits.
+5. **Per-pass checkpoint commit:** `git add paper/ nanoresearch.json && git commit -m "write: revision pass {n} complete"`.
 
 ### Completion
 
@@ -342,12 +341,12 @@ After final pass:
 
 Same two-sub-phase loop with these differences:
 
-1. **Additional inputs**: AUTO_REVIEW.md (full review history) and EXPERIMENT_SPEC.md `## Resubmission Requirements` section (structured AC requirements — this is the source of truth for what must be addressed).
+1. **Additional inputs**: AUTO_REVIEW.md and EXPERIMENT_SPEC.md `## Resubmission Requirements` (source of truth for what must be addressed).
 2. **Section drafting = section editing**: Each section is edited in-place, not rewritten. Per-section review prompt includes relevant reviewer feedback.
 3. **Targeted sections**: Determine impacted sections from AC requirements (in EXPERIMENT_SPEC.md) and new results.tsv rows. Compute the impacted set once at the start and persist in `write_state.impacted_sections` (array of SECTION_ORDER indices). Always revisit: experiments, introduction, conclusion, abstract. Revisit method only if protocol changed. Revisit related_work only if positioning/novelty claim changed.
 4. **Section skip**: When iterating through SECTION_ORDER, check if `i` is in `impacted_sections`. If not, skip: increment `current_section` and continue. Do not edit, review, or compile non-impacted sections.
-5. **Dependency closure (computed once, statically, when building `impacted_sections`)**: If experiments is in the impacted set → force include introduction, conclusion, abstract. If method is in the impacted set → force include experiments + all downstream. If related_work is in the impacted set → force include introduction (contribution framing depends on positioning). "Changes" means "is in the initial impacted set from AC requirements," not dynamic post-edit detection.
-6. **New results check**: Before entering revision mode editing, read `review_state.results_row_at_cycle_start` from `nanoresearch.json`. Rows in `results.tsv` with row number `#` > `results_row_at_cycle_start` are new for this cycle. If `results_row_at_cycle_start` is null, default to `0` (treat all post-baseline rows as potentially new) and log a warning. If no new rows among these have `status == keep` and the AC's requirements specifically demanded new experiments, note this limitation explicitly in the paper ("We attempted X but found no improvement") rather than fabricating claims about nonexistent results.
+5. **Dependency closure (computed once when building `impacted_sections`)**: experiments → force introduction, conclusion, abstract. method → force experiments + downstream. related_work → force introduction.
+6. **New results check**: Rows with `#` > `results_row_at_cycle_start` (default `0` if null) are new for this cycle. If no new `keep` rows exist but experiments were expected, disclose honestly — never fabricate.
 7. **Revision pass augmentation**: Pass 0 prompt adds: "Verify each resubmission requirement from EXPERIMENT_SPEC.md is addressed. Mark each as ADDRESSED or UNADDRESSABLE."
 
 Per-section review prompt addition for revision mode:
@@ -367,11 +366,11 @@ Write Python scripts in `paper/figures/` that read `results.tsv`. Generate PDF p
 
 ## Rules
 
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
+- **Large files**: If Write tool fails, retry via Bash heredoc.
 - **No fabricated citations.** Every BibTeX entry must come from DBLP/CrossRef or be marked `% [VERIFY]`.
 - **No unsupported claims.** Every claim must trace to results.tsv.
-- **Bias toward deletion.** When evidence is weak, soften the claim — don't suggest new experiments.
-- **One review round per section.** Fix blocking issues and move on. Revision passes catch the rest.
-- **Update write_state before each expensive operation**, not after. On crash, redo work rather than skip it.
-- **Reviews on disk.** Save raw reviews to `paper/reviews/section-{idx}-{name}.md` and `paper/reviews/cycle-{cycle}/revision-pass-{n}/`. Keep nanoresearch.json small.
+- **Bias toward deletion.** When evidence is weak, soften the claim.
+- **One review round per section.** Revision passes catch the rest.
+- **Update write_state before each expensive operation**, not after.
+- **Reviews on disk.** Save to `paper/reviews/`. Keep nanoresearch.json small.
 - If `nanoresearch.json` has a `venue` field, use appropriate formatting.

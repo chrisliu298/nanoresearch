@@ -29,18 +29,14 @@ The algorithm of research is `propose → evaluate → keep/discard`, applied at
 
 ### Write Phase
 
-- **NUM_REVISION_PASSES = 2** — Whole-paper revision passes with Prism-style review. Pass 0 (structural) catches structural issues, pass 1 (presentation) catches remaining presentation issues.
+- **NUM_REVISION_PASSES = 2** — Pass 0 (structural), pass 1 (presentation).
 - **REVISION_PANEL = 4+4** — 4 Claude write-critic subagents + 4 GPT-5.4 xhigh via Codex MCP per revision pass.
-- **SECTION_REVIEW_EFFORT = `xhigh`** — Codex effort level for per-section review during drafting. This is the only allowed effort level for all GPT-5.4 usage.
+- **SECTION_REVIEW_EFFORT = `xhigh`**
 
 ### Paper
 
 - **COMPILER = `latexmk`**
 - **MAX_COMPILE_ATTEMPTS = 3**
-
-### Enforced Rule: GPT-5.4 Effort Level
-
-- **All GPT-5.4 calls MUST use `config: {"model_reasoning_effort": "xhigh"}`**. No other effort level (`none`, `low`, `medium`, `high`) is permitted. This applies to every `mcp__codex__codex` call across all phases (scout, write, review). No exceptions, no compromise.
 
 ### Pipeline
 
@@ -50,10 +46,7 @@ The algorithm of research is `propose → evaluate → keep/discard`, applied at
 
 ### codex: off Mode
 
-When `codex: off`, all Codex MCP calls are replaced with Claude subagents. This eliminates cross-model diversity. Adjust synthesis rules:
-- Write revision panel: replace "issues flagged by both model families → must-fix" with "issues flagged by 3+ of 8 reviewers → must-fix".
-- Review panel: all 4 reviewers are Claude; use persona diversity as the discriminating signal, not model family.
-- Tag each review output with `[Claude-{persona/lens}]` for tracking.
+When `codex: off`, all Codex MCP calls are replaced with Claude subagents. Tag each output with `[Claude-{persona/lens}]`. Synthesis rules are defined in the consuming phase files (write.md, review.md).
 
 ## State Schema (nanoresearch.json)
 
@@ -66,15 +59,14 @@ phase: "scout" | "loop" | "write" | "review" | "completed" | "scout_failed"
 branch: "nanoresearch/<tag>"               # set at creation
 timestamp: ISO 8601                    # updated on every phase transition and resume
 idea_summary: string                   # set after scout
-best_metric: number                    # set after loop and updated after rebuttal experiments; MUST come from keep rows only — never discard/crash rows; uses metric direction from EXPERIMENT_SPEC.md (min for lower-is-better, max for higher-is-better)
+best_metric: number                    # from keep rows only; uses metric direction from EXPERIMENT_SPEC.md
 iteration_count: number               # set after loop
 venue: string | null                   # from override, passed to write and review
 codex: "on" | "off"                    # from override, default "on"
 pre_loop_stash_ref: string | null      # stash ref for user's dirty worktree; set before loop, cleared after stash pop
 decision: "accepted" | "rejected" | "memo" | null
-budget_override: string | null         # persisted from override (e.g., "8h"), survives resume
-loop_override: number | null           # persisted from override (e.g., 50), survives resume
-loop_started_at: number | null          # epoch seconds ($(date +%s)); set on first loop entry, preserved on resume, reset to null before resubmission/rebuttal loops
+loop_limit: {kind: "duration" | "iterations", value: string | number} | null  # persisted from override, survives resume
+loop_started_at: number | null          # epoch seconds; set on first loop entry, preserved on resume, reset to null before resubmission/rebuttal loops
 scout_state: {                         # initialized on phase: "scout" entry; also set for skip-scout/skip-to-write with novelty_confidence: "low"
   sub_phase: "survey" | "ideate" | "specify",
   novelty_confidence: "high" | "low",  # "low" if web search failed, <5 papers found, or scout was skipped
@@ -86,17 +78,14 @@ write_state: {                         # initialized on phase: "write" entry; re
   impacted_sections: [number] | null,  # revision mode only: indices into SECTION_ORDER to revisit
 }
 review_state: {                        # initialized on phase: "review" entry
-  cycle: number,                       # starts at 1, incremented on resubmission
+  cycle: number,
   sub_phase: "initial_review" | "rebuttal_triage" | "rebuttal_experiments" | "rebuttal_revision" | "rebuttal_response" | "rescoring" | "area_chair" | "decision_gate",
-  decision: "accepted" | "rejected" | null,  # per-cycle decision from AC
-  codex_threads: {R3?: string, R4?: string},  # present only when Codex used; saved incrementally per reviewer
-  reviewer_dispatch: {R1..R4: "claude" | "codex" | "claude-fallback"},  # actual dispatch method per reviewer
-  participating_reviewers: ["R1".."R4"],  # subset that succeeded; defines denominator for averaging
-  effective_synthesis_mode: "normal" | "codex_off" | null,  # set to "codex_off" if all reviewers are same model family
-  scores: {initial: {R1..R4: number}, post_rebuttal: {R1..R4: number}, inherited: [string]},  # inherited: reviewer IDs (e.g., ["R3"]) whose post_rebuttal scores are carried forward from initial (not genuine rescores); excluded from STRONG_REJECT_VETO
-  score_history: [{cycle, avg, decision}],  # dedup: at most one entry per cycle
-  results_row_at_cycle_start: number | null,  # row count of results.tsv when this review cycle began; set for ALL cycles including cycle 1
-  rebuttal_revision_progress: {current_section: number, impacted_sections: [number]} | null,  # tracks section-level progress during rebuttal revision
+  decision: "accepted" | "rejected" | null,
+  reviewer_dispatch: {R1..R4: "claude" | "codex" | "claude-fallback"},
+  scores: {initial: {R1..R4: number}, post_rebuttal: {R1..R4: number}, inherited: [string]},
+  score_history: [{cycle, avg, decision}],
+  results_row_at_cycle_start: number | null,
+  rebuttal_revision_progress: {current_section: number, impacted_sections: [number]} | null,
 }
 ```
 

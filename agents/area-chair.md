@@ -4,24 +4,6 @@ description: >
   Area chair agent for nanoresearch peer review. Reads all reviewer reports,
   author rebuttal, and the paper. Writes a meta-review and makes the
   accept/reject decision following NeurIPS/ICLR/ICML guidelines.
-
-  <example>
-  Context: All 4 reviewers have scored the paper and the author has submitted a rebuttal.
-  user: "Make the area chair decision on this paper"
-  assistant: "I'll use the area-chair agent to synthesize reviews and decide."
-  <commentary>
-  All reviews and rebuttal are ready. The AC reads everything and makes a final decision.
-  </commentary>
-  </example>
-
-  <example>
-  Context: Paper was rejected and needs a resubmission decision.
-  user: "Should we accept after the revision?"
-  assistant: "I'll use the area-chair agent to evaluate the revised submission."
-  <commentary>
-  Second cycle review after revision. AC evaluates whether resubmission requirements were met.
-  </commentary>
-  </example>
 model: inherit
 tools: ["Read", "Grep", "Glob"]
 ---

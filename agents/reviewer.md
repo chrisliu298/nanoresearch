@@ -4,15 +4,6 @@ description: >
   Parameterized ML venue reviewer agent. Spawned with a persona (methodologist,
   empiricist, novelty-critic, or skeptic) to review a paper independently.
   Read-only: critiques but never edits the paper.
-
-  <example>
-  Context: The nanoresearch review phase needs 4 independent reviews of a paper.
-  user: "Review this paper as a methodologist"
-  assistant: "I'll use the reviewer agent to provide an independent technical review."
-  <commentary>
-  Spawned as one of 4 reviewer instances, each with a different persona and focus.
-  </commentary>
-  </example>
 model: inherit
 tools: ["Read", "Grep", "Glob"]
 ---

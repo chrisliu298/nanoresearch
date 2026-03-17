@@ -63,7 +63,7 @@ Update `nanoresearch.json`: `scout_state.sub_phase: "ideate"`. Commit: `git add 
 
 ### Brainstorm
 
-**Primary:** Use `mcp__codex__codex` (REVIEWER_MODEL, `config: {"model_reasoning_effort": "xhigh"}` — xhigh is the only permitted effort level):
+**Primary:** Use `mcp__codex__codex` (REVIEWER_MODEL, `config: {"model_reasoning_effort": "xhigh"}`):
 
 ```
 Generate 5-8 concrete research ideas for: [topic]
@@ -96,7 +96,7 @@ If top idea fails pre-screen, try the next-ranked idea. If all fail → write `S
 
 ### Refine Top Idea
 
-If threadId exists from brainstorm, ask REVIEWER_MODEL (via `mcp__codex__codex-reply`) to play devil's advocate on the top idea: strongest objection, likely failure mode, minimum convincing experiment, primary + sanity metric. `mcp__codex__codex-reply` inherits the originating thread's model and effort settings — this is valid only because the brainstorm `mcp__codex__codex` call used `config: {"model_reasoning_effort": "xhigh"}`. If no threadId (brainstorm fell back to Claude), use `mcp__codex__codex` (`config: {"model_reasoning_effort": "xhigh"}` — the only permitted effort level) for a new thread.
+If threadId exists from brainstorm, ask REVIEWER_MODEL (via `mcp__codex__codex-reply`) to play devil's advocate on the top idea: strongest objection, likely failure mode, minimum convincing experiment, primary + sanity metric. If no threadId (brainstorm fell back to Claude), use `mcp__codex__codex` (`config: {"model_reasoning_effort": "xhigh"}`) for a new thread.
 
 **Fallback** (if Codex MCP unavailable or `codex: off`): self-critique using Claude directly.
 

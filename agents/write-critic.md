@@ -3,24 +3,6 @@ name: write-critic
 description: >
   Parameterized writing critic for nanoresearch write phase. Reviews sections
   or full papers under a specified lens. Read-only: critiques but never edits.
-
-  <example>
-  Context: The write phase needs per-section review during drafting.
-  user: "Review the method section for evidence support and clarity"
-  assistant: "I'll use the write-critic agent to review this section."
-  <commentary>
-  Spawned in section mode with lens=evidence to gate the method section.
-  </commentary>
-  </example>
-
-  <example>
-  Context: Whole-paper revision pass needs 4 parallel critics.
-  user: "Review this paper draft with a structure lens for the structural pass"
-  assistant: "I'll use the write-critic agent for structural review."
-  <commentary>
-  Spawned as one of 4 Claude write-critic instances, each with a different lens.
-  </commentary>
-  </example>
 model: inherit
 tools: ["Read", "Grep", "Glob"]
 ---
