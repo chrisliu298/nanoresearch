@@ -37,12 +37,14 @@ Check `nanoresearch.json`:
 
 Check `nanoresearch.json.write_state`:
 - If `write_state` exists and `sub_phase != "complete"` → **resume** from recorded position.
-- If `write_state.sub_phase == "section_drafting"` and `current_section >= len(SECTION_ORDER)` → transition to `sub_phase: "revision", revision_pass: 0` (gap state recovery).
+- If `write_state.sub_phase == "section_drafting"` and `current_section >= len(SECTION_ORDER)` → transition to `{sub_phase: "revision", current_section: len(SECTION_ORDER), revision_pass: 0}` (gap state recovery — normalize current_section).
 - If `write_state.sub_phase == "section_drafting"` → resume at `current_section`. Sections with existing `.tex` files at indices < `current_section` are kept.
 - If `write_state.sub_phase == "revision"` and `revision_pass >= NUM_REVISION_PASSES` → transition to `sub_phase: "complete"` (gap state recovery).
 - If `write_state.sub_phase == "revision"` → resume at `revision_pass`.
 - If `write_state.sub_phase == "complete"` → skip write phase (already done).
-- If absent → **initialize**: `{sub_phase: "section_drafting", current_section: 0, revision_pass: 0}`.
+- If absent → **initialize**: `{sub_phase: "section_drafting", current_section: 0, revision_pass: 0, impacted_sections: null}`.
+
+**Revision mode resume guard:** If `review_state.cycle > 1` (revision mode) and `write_state.sub_phase == "section_drafting"` and `impacted_sections` is null → recompute `impacted_sections` from AC requirements in `EXPERIMENT_SPEC.md` and new `results.tsv` rows before proceeding. Never iterate sections with null `impacted_sections` in revision mode (would skip all sections or crash).
 
 Detect revision mode from `review_state.cycle > 1`, not from write_state. The orchestrator resets `write_state` when entering a new write cycle after rejection.
 
@@ -71,12 +73,32 @@ Every claim must map to an accepted experiment in `results.tsv`. No claim withou
 
 ### Paper Facts Packet
 
-Build a compact digest shared with all reviewers:
-- Problem statement (2-3 bullets)
-- Proposed method (3-5 bullets)
-- Key results with exact numbers from results.tsv
-- Explicit limitations / caveats
-- Claims-evidence matrix
+Build a compact digest shared with all reviewers. Use this XML template so all Codex prompts receive structured, consistent context:
+
+```xml
+<paper_facts>
+  <problem>
+  - [2-3 bullet points]
+  </problem>
+  <method>
+  - [3-5 bullet points]
+  </method>
+  <results>
+  - Baseline: [metric] = [value]
+  - Best kept: [metric] = [value] ([delta] improvement)
+  - Key ablations: [1-2 sentences]
+  </results>
+  <limitations>
+  - [explicit limitation 1]
+  - [explicit limitation 2]
+  </limitations>
+  <claims_evidence>
+  | Claim | Experiment # | Metric delta | Strength |
+  </claims_evidence>
+</paper_facts>
+```
+
+**Ground truth rule:** `best_metric` and all claims must reference `keep` rows only from `results.tsv`. Never cite `discard` or `crash` rows as evidence.
 
 ### Outline
 
@@ -119,50 +141,65 @@ For related_work and any section needing citations:
 
 ### Step 3: Per-Section Review
 
-Submit section to GPT-5.4 via `mcp__codex__codex` at `xhigh` effort (the only permitted effort level — no other level is allowed):
+Submit section to GPT-5.4 via `mcp__codex__codex` at `xhigh` effort (the only permitted effort level — no other level is allowed). Use XML-tagged prompt per `docs/prompting-codex.md`:
 
-```
-mcp__codex__codex:
-  model: gpt-5.4
-  config: {"model_reasoning_effort": "xhigh"}
-  prompt: |
-    You are reviewing ONE section of an ML paper draft before the author moves on.
+```xml
+<goal>
+Review ONE section of an ML paper draft before the author moves on.
+Section: {section_name}. Purpose: {from outline}.
+Review this section only. Do not review the whole paper.
+</goal>
 
-    Section: {section_name}
-    Section purpose: {from outline}
+<context>
+{paper_facts_packet}
 
-    Review this section only. Do not review the whole paper.
+<results_data>
+Ground truth — filtered subset, max 15 rows.
+For evidence-bearing sections (method, experiments): baseline row (#0), best kept row, and rows referenced by claims. For non-evidence sections: baseline and best only.
+{filtered results.tsv rows}
+</results_data>
 
-    Paper facts:
-    {paper_facts_packet}
+<previous_sections>
+{list of completed section names + 2-3 bullet digest each}
+</previous_sections>
 
-    Results data (ground truth — filtered subset, max 15 rows):
-    {Include: baseline row (#0), best result row, and rows directly referenced by claims in this section. If the section references no specific experiments, include only baseline and best.}
+<current_section>
+{section .tex content}
+</current_section>
+</context>
 
-    Previously drafted sections (for consistency checking):
-    {list of completed section names + 2-3 bullet digest each}
+<constraints>
+Review for:
+1. Claims not supported by results data (check exact numbers against results_data)
+2. Missing required content for this section type
+3. Confusing argument flow
+4. Generic filler, AI-sounding prose, overclaiming
+5. Inconsistency with previously drafted sections
+6. Citation gaps (describe what type of citation is needed — do NOT suggest specific papers by name)
+7. Notation consistency with previously drafted sections
+8. Paragraph structure and sentence variety
+Max 500 words. Be specific and actionable. No praise. No listing things that are fine.
+</constraints>
 
-    Current section draft:
-    {section .tex content}
+<output_contract>
+## Verdict: PASS | REVISE
+## Blocking Issues
+- [location] — [issue] → [smallest concrete fix]
+...or "None"
+## Non-Blocking Issues
+- [location] — [issue] → [suggested fix]
+...or "None"
+## Cross-Section Risks
+- [potential inconsistency with previously drafted sections]
+...or "None"
+If a category has no issues, output "None" — do not hallucinate issues to fill space.
+</output_contract>
 
-    Review for:
-    1. Claims not supported by results.tsv data (check exact numbers)
-    2. Missing required content for this section type
-    3. Confusing argument flow
-    4. Generic filler, AI-sounding prose, overclaiming
-    5. Inconsistency with previously drafted sections
-    6. Citation gaps (for any section, not just related_work)
-
-    Output exactly:
-    ## Verdict: PASS | REVISE
-    ## Blocking Issues
-    - [location] — [issue] → [smallest concrete fix]
-    ## Non-Blocking Issues
-    - [location] — [issue] → [suggested fix]
-    ## Cross-Section Risks
-    - [potential inconsistency with previously drafted sections]
-
-    Rules: max 500 words. Be specific and actionable. No praise. No listing things that are fine.
+<verification_loop>
+Before finalizing:
+- For each claim you flag as unsupported, verify it is actually absent from the results data provided.
+- For each inconsistency you flag, cite the specific text in the previous section that conflicts.
+</verification_loop>
 ```
 
 **Codex fallback:** If Codex MCP unavailable OR `nanoresearch.json.codex == "off"`, spawn a Claude `write-critic` subagent in section mode with the same prompt content. Do NOT pass a `lens` parameter in section mode — section review applies all lenses comprehensively.
@@ -217,41 +254,54 @@ Each reviewer receives:
 - Lens assignment
 - In revision mode: AUTO_REVIEW.md feedback
 
-Prompt for Codex reviewers:
+Prompt for Codex reviewers (XML-tagged per docs/prompting-codex.md):
 
-```
+```xml
+<goal>
 You are one critic in an 8-reviewer paper-improvement panel.
-
-Pass focus: {structural | presentation}
-Your lens: {evidence | structure | positioning | clarity}
-
 Your job is NOT to score the paper. Find the highest-leverage edits.
+</goal>
 
-Paper facts:
+<context>
+<pass_focus>{structural | presentation}</pass_focus>
+<your_lens>{evidence | structure | positioning | clarity}</your_lens>
 {paper_facts_packet}
+<paper_source>{all .tex sections concatenated}</paper_source>
+{if revision_mode}<reviewer_feedback>{relevant AUTO_REVIEW.md excerpts}</reviewer_feedback>{/if}
+</context>
 
-Paper source:
-{all .tex sections concatenated}
-
-Instructions:
+<constraints>
 1. Find at most 5 issues inside your lens.
 2. For each: cite section/paragraph, explain why it matters, propose smallest fix.
 3. Stay in your lane. Mention out-of-lens issues only if fatal.
+4. If you find fewer than 5 issues, output only what you found. Zero is acceptable.
+5. Do NOT suggest specific papers to cite by name — describe what type of citation is needed.
+6. In structural pass: ignore grammar unless it blocks meaning.
+7. In presentation pass: do not request major restructuring unless factual error.
+8. Honest null-result reporting ("We attempted X but found no improvement") should NOT be flagged as a weakness.
+</constraints>
 
-Output exactly:
+<output_contract>
 ## Issues (max 5, ranked by severity)
 1. [CRITICAL|MAJOR|MINOR] [section, paragraph] — [issue]
-   Evidence: [quote or reference]
+   Evidence: [quote or reference from paper_source]
    Fix: [smallest concrete change]
+...or "No issues found under this lens"
 
 ## Cross-Cutting Problems
 - [issues spanning multiple sections]
 ...or "None"
 
-Rules: Max 600 words. No scores. No generic praise. Do not list things that are fine.
-In structural pass: ignore grammar unless it blocks meaning.
-In presentation pass: do not request major restructuring unless factual error.
+Max 600 words. No scores. No generic praise.
+</output_contract>
+
+<verification_loop>
+For each issue, verify the cited evidence quote actually appears in paper_source.
+Drop any issue you cannot ground in the provided text.
+</verification_loop>
 ```
+
+**Save each reviewer's output** to `paper/reviews/revision-pass-{n}/{reviewer}.md` as it completes. On resume, check which reviewer outputs already exist in the pass directory and skip re-dispatching those reviewers.
 
 ### Panel Failure Handling
 
@@ -265,7 +315,7 @@ Tag each review with its source: `[Claude-{lens}]` or `[GPT5.4-{lens}]` when col
 After collecting all reviews:
 
 1. **Deduplicate**: Group identical issues by location.
-2. **Prioritize**: Issues flagged by both model families in the same lens → must-fix. Issues flagged across 2+ lenses → must-fix. Any `CRITICAL` severity issue → must-fix (regardless of consensus). Single-reviewer stylistic nits → optional. **If `codex: off`** (all reviewers are Claude): replace the cross-model-family heuristic with "3+ of 8 reviewers → must-fix".
+2. **Prioritize**: Issues flagged by both model families in the same lens → must-fix. Issues flagged across 2+ lenses → must-fix. Any `CRITICAL` severity issue → must-fix (regardless of consensus). Single-reviewer stylistic nits → optional. **If `codex: off`** OR if all successful write-panel reviewers are the same model family (determine from the `[Claude-{lens}]` / `[GPT5.4-{lens}]` tags on collected results — do NOT use `review_state.effective_synthesis_mode`, which reflects the peer-review panel, not the write-critic panel): replace the cross-model-family heuristic with "3+ of 8 reviewers → must-fix".
 3. **Conflict resolution**: When reviewers disagree, prefer the action that keeps the paper closer to results.tsv. Ties favor the shorter paper (cut over expand).
 4. **Produce**: Ordered fix list, mandatory items first.
 

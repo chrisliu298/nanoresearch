@@ -51,6 +51,7 @@ Scores 4-7 are typical. 5=borderline reject, 6=weak accept, 7=accept. Do not inf
 [single integer 1-5 on its own line, nothing else]
 ### Strengths [ranked]
 ### Weaknesses [CRITICAL/MAJOR/MINOR, each with fix]
+### Affected Sections [list which sections from: method, experiments, related_work, introduction, conclusion, abstract]
 ### Questions for Authors [numbered]
 ### Recommendation [STRONG REJECT / REJECT / BORDERLINE REJECT / BORDERLINE ACCEPT / ACCEPT / STRONG ACCEPT]
 ```

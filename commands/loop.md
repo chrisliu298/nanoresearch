@@ -25,7 +25,7 @@ If `autoresearch.md` and `results.tsv` exist on a `nanoresearch/*` branch:
 2. Read `autoresearch.md` for context.
 3. **Check for pending revert:** If `.revert-pending` exists, a previous discard was interrupted. Read the target from `.revert-pending`. Restore backup files **idempotently** (check existence before each mv): `[ -f results.tsv.bak ] && mv results.tsv.bak results.tsv`, same for `autoresearch.md.bak`, `nanoresearch.json.bak`, `EXPERIMENT_SPEC.md.bak`. If a backup file is missing (already restored in a prior partial recovery), skip it. Remove `.revert-pending`. Clean up any remaining `.bak` files: `rm -f *.bak`. Log: "Recovered from interrupted revert."
 4. **Check for interrupted exploration episode:** If `autoresearch.md` contains `## Active Exploration`, read the `start_commit` from that section. Reset to it: `git reset --hard <start_commit>`. Restore `.episode-bak` files if they exist (`mv results.tsv.episode-bak results.tsv` etc.). Remove the `## Active Exploration` section from `autoresearch.md`. Log: "Abandoned interrupted exploration episode." **Skip step 5 after this** (HEAD is known-safe at the exploration start commit).
-5. **Verify HEAD is safe:** find the last `keep` row in `results.tsv` (if no `keep` row exists, use the baseline row #0). Check if that commit is an ancestor of HEAD: `git merge-base --is-ancestor <keep-commit> HEAD`. If YES → HEAD is safe (may be a checkpoint commit on top of the keep). If NO → crash left HEAD on an unevaluated or divergent commit; `git reset --hard <keep-commit>`. After any reset, verify `results.tsv` and `autoresearch.md` still exist — if destroyed, restore from git: `git show <keep-commit>:results.tsv > results.tsv`.
+5. **Verify HEAD is safe:** If `results.tsv` has no data rows or no baseline row #0, skip ancestry checking — recreate a clean header if needed and proceed to baseline (step 7). Otherwise: find the last `keep` row in `results.tsv` (if no `keep` row exists, use the baseline row #0). Check if that commit is an ancestor of HEAD: `git merge-base --is-ancestor <keep-commit> HEAD`. If YES → HEAD is safe (may be a checkpoint commit on top of the keep). If NO → crash left HEAD on an unevaluated or divergent commit; `git reset --hard <keep-commit>`. After any reset, verify `results.tsv` and `autoresearch.md` still exist — if destroyed, restore from git: `git show <keep-commit>:results.tsv > results.tsv`.
 
 **Resume context:**
 6. Read only the last `keep` row in `results.tsv` for the current best.
@@ -41,7 +41,7 @@ If neither exists, establish with the user: metric (with direction), command, me
 ## Initialization
 
 1. Create branch `nanoresearch/<tag>` from main if not already on a `nanoresearch/*` branch.
-2. **Clean tree check**: If `git status --porcelain` is non-empty AND this is NOT a rebuttal/resubmission invocation (i.e., `EXPERIMENT_SPEC.md` does NOT contain `## Rebuttal Addendum` or `## Resubmission Requirements`), `git stash push -m 'nanoresearch: pre-loop'`. Pop stash after loop completes. Skip stash for rebuttal/resubmission — the caller manages the working tree.
+2. **Clean tree check**: If `git status --porcelain` is non-empty AND this is NOT a rebuttal/resubmission invocation (i.e., `EXPERIMENT_SPEC.md` does NOT contain `## Rebuttal Addendum` or `## Resubmission Requirements`), `git stash push -m 'nanoresearch: pre-loop'`. Record the stash ref in `autoresearch.md` under `## Stashed Changes` (so it survives crashes). Pop stash on ALL exit paths (success, failure, budget exhaustion). If pop fails (conflict), log warning: "Could not restore stashed changes. Run `git stash pop` manually." Skip stash for rebuttal/resubmission — the caller manages the working tree.
 3. Read every in-scope file AND relevant read-only files.
 4. **Preflight**: Verify: (a) data files in EXPERIMENT_SPEC.md exist and are non-empty, (b) command is executable (`command -v`), (c) required packages importable, (d) `timeout` command exists — if not, check for `gtimeout` (macOS with coreutils) and alias it. If any fail → fix or set `status: "failed"` and stop.
 5. Add `run.log`, `.revert-pending`, `*.bak`, `*.episode-bak` to `.gitignore` if not present. Commit.
@@ -77,7 +77,7 @@ Each iteration:
 3. **Edit.** In-scope files only.
 4. **Commit.** Stash `autoresearch.md` if dirty: `git stash push autoresearch.md`. Then `git add <files> && git commit -m "<description>"` — commit BEFORE running. Pop stash after: `git stash pop` (if stashed).
 5. **Run.** `timeout ${clamped_timeout}m <command> > run.log 2>&1` (where `clamped_timeout = min(TIMEOUT_MINUTES, remaining_budget_minutes)`)
-6. **Extract.** Run extraction commands for primary and sanity metrics. No output → crash → `tail -n 50 run.log`.
+6. **Extract and validate.** Run extraction commands for primary and sanity metrics. No output → crash → `tail -n 50 run.log`. **Numeric validation gate:** Each extractor must yield exactly one finite numeric scalar. If extraction returns multiple numbers, non-numeric text, `nan`, `inf`, or an empty value, treat the run as `crash` with reason "metric extraction failed: [raw output]". Do not record non-numeric metrics in `results.tsv` or use them for keep/discard decisions.
 7. **Record.** Append to `results.tsv`. Do NOT commit it.
 8. **Guard.** Run guard only on improvement. Fail → rework (max 2 attempts) → discard.
 9. **Sanity check.** Degraded beyond bound → discard even if primary improved.
@@ -95,7 +95,7 @@ Each iteration:
     If the process crashes between steps 2-4, the resume logic detects `.revert-pending` and completes the restore.
 11. **Report.** Every 5 iterations: `=== Iteration N: metric at X.XX, K/D/C ===`
 12. **Update `autoresearch.md`** every ~5 experiments.
-13. **Checkpoint.** Every 10 iterations: `git add results.tsv autoresearch.md && git commit -m "loop: checkpoint at iteration N"`. This makes progress durable for preemptible machines.
+13. **Checkpoint.** Every 10 iterations: `git add results.tsv autoresearch.md nanoresearch.json && git commit -m "loop: checkpoint at iteration N"`. Include `nanoresearch.json` to persist `loop_started_at` and any state updates durably.
 14. **Repeat.**
 
 ### Simplicity Criterion
@@ -113,7 +113,7 @@ Some improvements require 2-3 coordinated edits that look bad individually. When
 3. **Evaluate at the episode end** (after all steps are committed, or after the exploration budget is exhausted). Run the command once and extract metrics. Record a single row in `results.tsv` with the episode's final metric and a description summarizing all steps.
 4. **Decide on the whole episode:**
    - Improved → `keep` (all commits stay). Remove `## Active Exploration` from `autoresearch.md`. Clean up: `rm -f *.episode-bak`.
-   - Not improved → `discard` the entire episode: restore from episode backups (`mv results.tsv.episode-bak results.tsv && mv autoresearch.md.episode-bak autoresearch.md && mv nanoresearch.json.episode-bak nanoresearch.json && mv EXPERIMENT_SPEC.md.episode-bak EXPERIMENT_SPEC.md`), then `git reset --hard <exploration_start_commit>`. Clean up: `rm -f *.episode-bak`.
+   - Not improved → `discard` the entire episode: first `git reset --hard <exploration_start_commit>` (restore code to episode start), THEN restore state files from episode backups (`mv results.tsv.episode-bak results.tsv && mv autoresearch.md.episode-bak autoresearch.md && mv nanoresearch.json.episode-bak nanoresearch.json && mv EXPERIMENT_SPEC.md.episode-bak EXPERIMENT_SPEC.md`). The order matters: reset first, then restore — otherwise the reset overwrites the restored files. Clean up: `rm -f *.episode-bak`.
 5. **Limit:** Max 1 exploration episode per 5 total iterations (counting episode commits toward the 5). Do not start an episode if it would span a checkpoint boundary (iteration divisible by 10). Defer to after the checkpoint.
 
 **Crash recovery:** On resume, if `autoresearch.md` contains `## Active Exploration`, an episode was interrupted. Read the `start_commit` from that section. Reset to it: `git reset --hard <start_commit>`, restore `.episode-bak` files if they exist, remove `## Active Exploration`. The episode is abandoned — it can be retried from scratch.

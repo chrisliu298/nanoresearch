@@ -66,17 +66,17 @@ phase: "scout" | "loop" | "write" | "review" | "completed" | "scout_failed"
 branch: "nanoresearch/<tag>"               # set at creation
 timestamp: ISO 8601                    # updated on every phase transition and resume
 idea_summary: string                   # set after scout
-best_metric: number                    # set after loop
+best_metric: number                    # set after loop; MUST come from keep rows only — never discard/crash rows
 iteration_count: number               # set after loop
 venue: string | null                   # from override, passed to write and review
 codex: "on" | "off"                    # from override, default "on"
 decision: "accepted" | "rejected" | "memo" | null
 budget_override: string | null         # persisted from override (e.g., "8h"), survives resume
 loop_override: number | null           # persisted from override (e.g., 50), survives resume
-loop_started_at: ISO 8601 | null       # set on first loop entry, preserved on resume, used for budget tracking
-scout_state: {                         # initialized on phase: "scout" entry
+loop_started_at: number | null          # epoch seconds ($(date +%s)); set on first loop entry, preserved on resume, reset to null before resubmission/rebuttal loops
+scout_state: {                         # initialized on phase: "scout" entry; also set for skip-scout/skip-to-write with novelty_confidence: "low"
   sub_phase: "survey" | "ideate" | "specify",
-  novelty_confidence: "high" | "low",  # "low" if web search failed or <5 papers found
+  novelty_confidence: "high" | "low",  # "low" if web search failed, <5 papers found, or scout was skipped
 }
 write_state: {                         # initialized on phase: "write" entry; reset on fresh entry, preserved on crash resume
   sub_phase: "section_drafting" | "revision" | "complete",
@@ -90,9 +90,12 @@ review_state: {                        # initialized on phase: "review" entry
   decision: "accepted" | "rejected" | null,  # per-cycle decision from AC
   codex_threads: {R3?: string, R4?: string},  # present only when Codex used; saved incrementally per reviewer
   reviewer_dispatch: {R1..R4: "claude" | "codex" | "claude-fallback"},  # actual dispatch method per reviewer
+  participating_reviewers: ["R1".."R4"],  # subset that succeeded; defines denominator for averaging
+  effective_synthesis_mode: "normal" | "codex_off" | null,  # set to "codex_off" if all reviewers are same model family
   scores: {initial: {R1..R4: number}, post_rebuttal: {R1..R4: number}},
-  score_history: [{cycle, avg, decision}],
-  results_row_at_cycle_start: number | null,  # row count of results.tsv when this review cycle began; used to identify new evidence
+  score_history: [{cycle, avg, decision}],  # dedup: at most one entry per cycle
+  results_row_at_cycle_start: number | null,  # row count of results.tsv when this review cycle began; set for ALL cycles including cycle 1
+  rebuttal_revision_progress: {current_section: number, impacted_sections: [number]} | null,  # tracks section-level progress during rebuttal revision
 }
 ```
 
@@ -109,5 +112,6 @@ review_state: {                        # initialized on phase: "review" entry
 | `autoresearch.md` | loop | loop (resume), write (fallback) | Recovery doc, evolves during loop |
 | `paper/main.tex` | write | review | Paper source (reviewers read .tex; PDF is compilation artifact) |
 | `paper/reviews/*.md` | write | write (resume) | Per-section and per-pass review artifacts; raw reviewer feedback on disk, not in nanoresearch.json |
+| `paper/reviews/cycle-{N}/` | review | review (resume), write (revision) | Cycle-scoped review artifacts: `R{K}.md` (initial), `R{K}-rescore.md`, `area-chair.md`. Authoritative for resume |
 | `RESEARCH_MEMO.md` | write (weak results) | orchestrator | Review skipped |
 | `AUTO_REVIEW.md` | review | orchestrator, write (revision) | Full review history |
