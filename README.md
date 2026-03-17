@@ -73,8 +73,18 @@ The algorithm of research is `propose → evaluate → keep/discard`, applied at
 ## Setup
 
 ```bash
-# Install the plugin
-claude plugin install /path/to/nanoresearch
+# 1. Clone the repo
+git clone https://github.com/chrisliu298/nanoresearch.git ~/.nanoresearch
+
+# 2. Register the marketplace — add this to ~/.claude/settings.json:
+#    "extraKnownMarketplaces": {
+#      "nanoresearch": {
+#        "source": { "source": "directory", "path": "~/.nanoresearch" }
+#      }
+#    }
+
+# 3. Install the plugin
+claude plugin install nanoresearch@nanoresearch
 
 # Required: Codex MCP (for GPT-5.4 reviewers and brainstorming)
 npm install -g @openai/codex
