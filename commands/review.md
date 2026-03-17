@@ -173,7 +173,7 @@ Commit: `git add paper/reviews/cycle-{N}/ nanoresearch.json && git commit -m "re
 
 Concatenate the **current** (revised) `.tex` section files into updated paper text. Each reviewer must see the revised paper, not the original.
 
-**Only rescore reviewers in `participating_reviewers`.** Reviewers who failed Phase 1 have no initial review or score — skip them entirely during rescoring.
+**Only rescore reviewers with scores in `scores.initial`.** Reviewers who failed Phase 1 have no initial review — skip them entirely.
 
 **Rescoring output contract:** Use the rescoring format from `agents/reviewer.md` (Overall Score, Confidence, Recommendation, What Changed). Same parse/retry/fallback rules as Phase 1. Post-rebuttal recommendations are authoritative for AC decision rule 3.
 
@@ -238,7 +238,7 @@ Update `nanoresearch.json`: `review_state.sub_phase: "area_chair"`.
 
 **Check for persisted AC output:** If `paper/reviews/cycle-{N}/area-chair.md` already exists (crash-resume after AC completed but before Phase 5), consume it instead of re-running the AC. This prevents non-deterministic regeneration.
 
-Otherwise, invoke `area-chair` agent with: all reviews (initial + updated from `paper/reviews/cycle-{N}/`), author rebuttal, paper text, `results.tsv` content, pre-computed score table `{R1: X, R2: Y, ...}` (from `review_state.scores.post_rebuttal`, falling back to `initial` for missing entries — **only for reviewers in `participating_reviewers`**, ignore scores for non-participants even if present), pre-computed average (over `participating_reviewers` only — never divide by 4 if only 3 reviewed), `any_post_rebuttal_score <= STRONG_REJECT_VETO` boolean (computed over `participating_reviewers` only, excluding reviewers in `scores.inherited` unless fewer than 2 non-inherited scores exist — see Phase 3), `scores.inherited` list, ACCEPTANCE_THRESHOLD, STRONG_REJECT_VETO, post-rebuttal recommendation table. Also include `reviewer_dispatch` so the AC knows which reviewers were cross-model vs. same-model. **If `review_state.cycle > 1`**, also pass `EXPERIMENT_SPEC.md`'s `## Resubmission Requirements` section and instruct the AC to verify each requirement is addressed before making a decision.
+Otherwise, invoke `area-chair` agent with: all reviews (initial + updated from `paper/reviews/cycle-{N}/`), author rebuttal, paper text, `results.tsv` content, pre-computed score table (from `scores.post_rebuttal` falling back to `initial`, only for reviewers with `scores.initial` entries), pre-computed average, `any_post_rebuttal_score <= STRONG_REJECT_VETO` boolean (excluding `scores.inherited` reviewers unless fewer than 2 non-inherited — see Phase 3), `scores.inherited` list, ACCEPTANCE_THRESHOLD, STRONG_REJECT_VETO, post-rebuttal recommendation table, `reviewer_dispatch`. **If cycle > 1**, also pass `## Resubmission Requirements` from `EXPERIMENT_SPEC.md`.
 
 **Score average:** Arithmetic mean over reviewers with scores in `scores.initial` (use `post_rebuttal` if available, else `initial`). Fewer than 3 with scores → `status: "failed"`.
 
@@ -265,7 +265,7 @@ AC produces: meta-review, decision (ACCEPT/REJECT), if reject → top 3 actionab
 Update `nanoresearch.json`:
 - `review_state.sub_phase: "decision_gate"`
 - `review_state.decision`: already set in Phase 4 (verify consistency)
-- Compute `avg` as arithmetic mean over `participating_reviewers` only (use `post_rebuttal` scores where available, `initial` for missing)
+- Compute `avg` as arithmetic mean over reviewers with `scores.initial` entries (use `post_rebuttal` if available, else `initial`)
 - **Dedup check:** Before appending to `score_history`, check if an entry with the current `cycle` number already exists. If so, update it in place rather than appending (prevents duplicates on crash-resume).
 - Append `{cycle: N, avg: <computed>, decision: "accepted"/"rejected"}` to `review_state.score_history`
 

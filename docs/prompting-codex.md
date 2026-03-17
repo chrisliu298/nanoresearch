@@ -219,16 +219,6 @@ Every `mcp__codex__codex` call must include `config: {"model_reasoning_effort": 
 
 **`mcp__codex__codex-reply` calls** inherit the originating thread's model and effort settings. They are permitted only when the thread was created by an `mcp__codex__codex` call configured with `xhigh`. No explicit effort config is needed on reply calls, but the originating call must have set xhigh.
 
-For reference, the available effort levels in the Codex API are listed below, but only `xhigh` is authorized for use:
-
-| Level | Status in nanoresearch |
-|-------|----------------------|
-| `none` | **NOT ALLOWED** |
-| `low` | **NOT ALLOWED** |
-| `medium` | **NOT ALLOWED** |
-| `high` | **NOT ALLOWED** |
-| `xhigh` | **REQUIRED** — the only permitted effort level for all GPT-5.4 usage |
-
 **Prompt quality still matters.** Improve the prompt first — add an `<output_contract>`, `<completeness_contract>`, or `<verification_loop>` — and always pair it with `xhigh` effort. If the model feels too literal or stops at the first plausible answer, combine a dig-deeper nudge with `xhigh`:
 
 ```xml

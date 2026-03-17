@@ -23,8 +23,7 @@ If `autoresearch.md` and `results.tsv` exist on a `nanoresearch/*` branch:
 **Crash recovery (ALWAYS runs — including rebuttal/resubmission):**
 1. Read `nanoresearch.json.branch` and `git checkout <branch>` (use the stored authoritative branch name, not a synthesized `nanoresearch/<tag>`).
 2. Read `autoresearch.md` for context.
-3. **Check for stranded autoresearch.md stash:** If `autoresearch.md` does not exist in the working tree AND `git stash list` contains an entry with message containing `loop: autoresearch temp` (but NOT `nanoresearch: pre-loop`), pop that specific stash entry by index: `git stash pop stash@{N}`. Log: "Recovered stranded autoresearch.md stash."
-4. **Check for pending revert:** If `.revert-pending` exists, a previous discard was interrupted. Read the target from `.revert-pending`. Restore backup files **idempotently** (check existence before each mv): `[ -f results.tsv.bak ] && mv results.tsv.bak results.tsv`, same for `autoresearch.md.bak`, `nanoresearch.json.bak`, `EXPERIMENT_SPEC.md.bak`. If a backup file is missing (already restored in a prior partial recovery), skip it. Remove `.revert-pending`. Clean up any remaining `.bak` files: `rm -f *.bak`. Log: "Recovered from interrupted revert."
+3. **Check for pending revert:** If `.revert-pending` exists, a previous discard was interrupted. Read the target from `.revert-pending`. Restore backup files **idempotently** (check existence before each mv): `[ -f results.tsv.bak ] && mv results.tsv.bak results.tsv`, same for `autoresearch.md.bak`, `nanoresearch.json.bak`, `EXPERIMENT_SPEC.md.bak`. If a backup file is missing (already restored in a prior partial recovery), skip it. Remove `.revert-pending`. Clean up any remaining `.bak` files: `rm -f *.bak`. Log: "Recovered from interrupted revert."
 5. **Check for interrupted exploration episode:** If `autoresearch.md` contains `## Active Exploration`, read the `start_commit` from that section. Reset to it: `git reset --hard <start_commit>`. Restore `.episode-bak` files if they exist (`mv results.tsv.episode-bak results.tsv` etc.). Remove the `## Active Exploration` section from `autoresearch.md`. **Commit the recovery immediately** to make it durable: `git add results.tsv autoresearch.md nanoresearch.json EXPERIMENT_SPEC.md && git commit -m "loop: abandoned exploration episode"`. Log: "Abandoned interrupted exploration episode." **Skip step 6 after this** (HEAD is known-safe at the exploration start commit).
 6. **Verify HEAD is safe:** If no baseline row exists, skip to baseline (step 7). Otherwise find the last `keep` commit from `results.tsv`. If HEAD has unevaluated experiment commits on top of the keep commit, `git reset --hard <keep-commit>`. Infrastructure commits (prefixed `loop:`, `scout:`, `write:`, `review:`, `revise:`, `nanoresearch:`) are safe — only reset for uncommitted experiment hypotheses. After any reset, restore `results.tsv` and `autoresearch.md` from the keep commit if missing.
 
@@ -122,29 +121,16 @@ Some improvements require 2-3 coordinated edits that look bad individually. When
 
 Use exploration episodes when: the next improvement clearly requires setup (refactoring, adding instrumentation, restructuring data flow) before the payoff.
 
-### Strategy Checkpoint (every 10 iterations)
+### Strategy Recovery (every 10 iterations OR 3+ consecutive reverts)
 
-At every 10th iteration (aligned with the git checkpoint), perform a structured strategy review. **Do not run during an active exploration episode** — defer to after the episode concludes. If the stuck recovery protocol was triggered within the last 5 iterations, skip the direction-change analysis and just record the trajectory.
+**Trigger:** At every 10th iteration (aligned with checkpoint), or immediately after 3+ consecutive reverts. Do not run during an active exploration episode.
 
-1. **Classify trajectory:** Summarize the last 10 evaluated experiments (exclude any abandoned exploration episodes) in a table: approach, result, likely cause.
-2. **Assess momentum:** `making_progress` (2+ keeps in last 10) | `plateau` (1 keep) | `stuck` (0 keeps).
-3. **If plateau or stuck:**
-   a. Identify the common thread across recent failures.
-   b. Generate 3 alternative directions with explicit predictions for each.
-   c. Commit to one direction for the next 5 iterations.
-4. Record the strategy assessment in `autoresearch.md` under `## Strategy Checkpoints`.
+1. **Classify trajectory:** Table of recent experiments: approach, result, likely cause. Assess momentum: `making_progress` (2+ keeps in last 10) | `plateau` (1 keep) | `stuck` (0 keeps).
+2. **If plateau or stuck:** Identify the common failure pattern. Generate 3 fundamentally different directions (not variations) with predicted outcomes. Commit to one.
+3. **Escalation (all 3 fail):** Re-read source files. Check `papers/` or `literature/`. Consider an exploration episode. Rewind to an earlier successful commit and try a completely different approach.
+4. Record in `autoresearch.md` under `## Strategy Checkpoints`.
 
-### When Stuck (3+ consecutive reverts)
-
-Structured recovery protocol — do NOT just "think harder":
-
-1. **Failure analysis:** Produce a table of the last 5+ failed approaches: what was tried, what happened, likely root cause.
-2. **Pattern identification:** What do the failures have in common? Is the bottleneck in the model, data, evaluation, or approach?
-3. **Direction change:** Generate 3 fundamentally different directions (not variations of the same idea). For each, state the predicted outcome and why it avoids the identified pattern.
-4. **Commit to one** and run it. If it also fails, try the next. If all 3 fail, consider an exploration episode for a multi-step approach.
-5. **Last resort:** Re-read source files. Read local papers in `papers/` or `literature/` if present. Rewind to an earlier successful commit and try a completely different approach.
-
-**NEVER give up. But think differently, not just harder.**
+**Think differently, not harder.**
 
 ## Logging
 
