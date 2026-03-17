@@ -1,0 +1,6 @@
+.relay/
+run.log
+*.pdf
+paper/*.pdf
+.nanoresearch/
+*.bak
