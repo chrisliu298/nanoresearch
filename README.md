@@ -18,6 +18,7 @@ The algorithm of research is `propose → evaluate → keep/discard`, applied at
 |-------|-------|-------------|
 | Ideas | **Scout** | Survey literature, generate ideas, verify novelty, produce experiment spec |
 | Code | **Loop** | Edit → commit → run → measure → keep or revert (autoresearch) |
+| Writing | **Write** | Draft section → review → fix (×6 sections), then revise → panel review → fix (×2 passes) |
 | Papers | **Review** | 4 reviewers score → rebuttal → area chair decides → revise if rejected |
 
 ## Pipeline
@@ -49,8 +50,19 @@ The algorithm of research is `propose → evaluate → keep/discard`, applied at
           │                     ▼
           │     ┌───────────────────────────────┐
           │     │            WRITE              │
-          │     │  section-by-section drafting  │
-          │     │  + 4+4 panel revision passes  │
+          │     │                               │
+          │     │    ┌──────────────────────┐   │
+          │     │    │ draft → review → fix │   │
+          │     │    └───┬─────────────┬────┘   │
+          │     │   next section    all done    │
+          │     │    │   └──────┬──────┘        │
+          │     │    └──────────┘               │
+          │     │    ┌──────────────────────┐   │
+          │     │    │ 4+4 panel → fix      │   │
+          │     │    └───┬─────────────┬────┘   │
+          │     │   next pass      2 passes     │
+          │     │    │   └──────┬──────┘        │
+          │     │    └──────────┘               │
           │     │  (or memo if results weak)    │
           │     └───────────────┬───────────────┘
           │                     │
