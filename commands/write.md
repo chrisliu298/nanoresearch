@@ -37,7 +37,7 @@ Check `nanoresearch.json`:
 
 Check `nanoresearch.json.write_state`:
 - If absent → **initialize**: `{sub_phase: "section_drafting", current_section: 0, revision_pass: 0, impacted_sections: null}`.
-- If `write_state.sub_phase == "complete"` → skip write phase (already done).
+- If `write_state.sub_phase == "complete"` AND `paper/main.tex` exists → skip write phase (already done). If `write_state.sub_phase == "complete"` AND `paper/main.tex` does NOT exist → log warning "write_state is complete but paper/main.tex missing; resetting", then reset `write_state` to `{sub_phase: "section_drafting", current_section: 0, revision_pass: 0, impacted_sections: null}` and proceed.
 - **Gap-state normalization (run before generic resume):**
   - If `write_state.sub_phase == "section_drafting"` and `current_section >= len(SECTION_ORDER)` → transition to `{sub_phase: "revision", current_section: len(SECTION_ORDER), revision_pass: 0}`.
   - If `write_state.sub_phase == "revision"` and `revision_pass >= NUM_REVISION_PASSES` → transition to `sub_phase: "complete"`.
@@ -142,7 +142,7 @@ For related_work and any section needing citations:
 
 ### Step 3: Per-Section Review
 
-Submit section to GPT-5.4 via `mcp__codex__codex` at `xhigh` effort (the only permitted effort level — no other level is allowed). Use XML-tagged prompt per `docs/prompting-codex.md`:
+Submit section to GPT-5.4 via `mcp__codex__codex` at `xhigh` effort (the only permitted effort level — no other level is allowed). **Codex timeout:** If the call does not return within `CODEX_CALL_TIMEOUT_MINUTES` (10 minutes), treat it as a failure and fall back to Claude `write-critic` subagent. Use XML-tagged prompt per `docs/prompting-codex.md`:
 
 ```xml
 <goal>
@@ -245,7 +245,7 @@ For each pass, launch 8 reviewers in parallel:
 **4 Claude write-critic subagents** (`run_in_background: true`):
 - Each spawned with the `write-critic` agent, a different lens from REVISION_LENSES, and the pass focus.
 
-**4 GPT-5.4 via Codex MCP** (4 separate `mcp__codex__codex` calls at `xhigh` — the only permitted effort level):
+**4 GPT-5.4 via Codex MCP** (4 separate `mcp__codex__codex` calls at `xhigh` — the only permitted effort level). **Codex timeout:** If any call does not return within `CODEX_CALL_TIMEOUT_MINUTES` (10 minutes), treat it as a failure and replace with Claude `write-critic` subagent using the same lens:
 - Each assigned a lens from REVISION_LENSES.
 - Fresh `mcp__codex__codex` call per pass (no thread continuity between passes — different pass foci would contaminate each other).
 
@@ -304,7 +304,7 @@ Drop any issue you cannot ground in the provided text.
 </verification_loop>
 ```
 
-**Save each reviewer's output** to `paper/reviews/cycle-{C}/revision-pass-{n}/{model_family}-{lens}.md` where `C = review_state.cycle` if `review_state` exists, otherwise `1` as it completes (e.g., `paper/reviews/cycle-1/revision-pass-0/claude-evidence.md`). Cycle-scoping prevents resubmission cycles from reusing stale prior-cycle reviews. On resume, check which reviewer outputs already exist in the current cycle's pass directory. **Validate each cached file:** must be > 100 bytes and contain expected headings (`## Issues` or `No issues found`). If validation fails, delete the file and re-dispatch that reviewer. Skip re-dispatching only reviewers with valid cached output.
+**Save each reviewer's output** to `paper/reviews/cycle-{C}/revision-pass-{n}/slot-{K}-{lens}.md` where `C = review_state.cycle` if `review_state` exists, otherwise `1`, and `K` is a stable slot number 1-8 (slots 1-4 are initially Claude, slots 5-8 are initially Codex; fallback does NOT change the slot number). For example: `paper/reviews/cycle-1/revision-pass-0/slot-1-evidence.md`. Tag each review with its actual source: `[Claude-{lens}]` or `[GPT5.4-{lens}]`. Cycle-scoping prevents resubmission cycles from reusing stale prior-cycle reviews. On resume, check which reviewer outputs already exist in the current cycle's pass directory. **Validate each cached file:** must be > 100 bytes and contain expected headings (`## Issues` or `No issues found`). If validation fails, delete the file and re-dispatch that reviewer. Skip re-dispatching only reviewers with valid cached output.
 
 ### Panel Failure Handling
 
@@ -318,7 +318,7 @@ Tag each review with its source: `[Claude-{lens}]` or `[GPT5.4-{lens}]` when col
 After collecting all reviews:
 
 1. **Deduplicate**: Group identical issues by location.
-2. **Prioritize**: Issues flagged by both model families in the same lens → must-fix. Issues flagged across 2+ lenses → must-fix. Any `CRITICAL` severity issue → must-fix (regardless of consensus). Single-reviewer stylistic nits → optional. **If `codex: off`** OR if all successful write-panel reviewers are the same model family (determine from the `[Claude-{lens}]` / `[GPT5.4-{lens}]` tags on collected results — do NOT use `review_state.effective_synthesis_mode`, which reflects the peer-review panel, not the write-critic panel): replace the cross-model-family heuristic with "3+ of N successful panel reviewers → must-fix" (e.g., 3+ of 8 at full panel, 3+ of 5 at minimum panel). This substitutes cross-model consensus with a broader same-model agreement threshold.
+2. **Prioritize**: **If cross-model diversity exists** (NOT `codex: off` AND successful panel contains both `[Claude-{lens}]` and `[GPT5.4-{lens}]` tags): issues flagged by both slot-pair reviewers assigned to the same lens (regardless of whether one fell back from Codex to Claude) → must-fix. Issues flagged across 2+ lenses → must-fix. Any `CRITICAL` severity issue → must-fix (regardless of consensus). Single-reviewer stylistic nits → optional. **If `codex: off`** OR if all successful write-panel reviewers are the same model family (determine from the `[Claude-{lens}]` / `[GPT5.4-{lens}]` tags on collected results — do NOT use `review_state.effective_synthesis_mode`, which reflects the peer-review panel, not the write-critic panel): **disable the slot-pair 2-of-2 rule** and use only "3+ of N successful panel reviewers → must-fix" (e.g., 3+ of 8 at full panel, 3+ of 5 at minimum panel). CRITICAL severity issues remain must-fix regardless. **Degenerate panel fallback:** If the successful panel size is less than 3, lower the must-fix threshold: any issue flagged by 2+ reviewers → must-fix; if only 1 reviewer succeeded, all CRITICAL and MAJOR issues from that reviewer are must-fix.
 3. **Conflict resolution**: When reviewers disagree, prefer the action that keeps the paper closer to results.tsv. Ties favor the shorter paper (cut over expand).
 4. **Produce**: Ordered fix list, mandatory items first.
 
@@ -347,7 +347,7 @@ Same two-sub-phase loop with these differences:
 3. **Targeted sections**: Determine impacted sections from AC requirements (in EXPERIMENT_SPEC.md) and new results.tsv rows. Compute the impacted set once at the start and persist in `write_state.impacted_sections` (array of SECTION_ORDER indices). Always revisit: experiments, introduction, conclusion, abstract. Revisit method only if protocol changed. Revisit related_work only if positioning/novelty claim changed.
 4. **Section skip**: When iterating through SECTION_ORDER, check if `i` is in `impacted_sections`. If not, skip: increment `current_section` and continue. Do not edit, review, or compile non-impacted sections.
 5. **Dependency closure (computed once, statically, when building `impacted_sections`)**: If experiments is in the impacted set → force include introduction, conclusion, abstract. If method is in the impacted set → force include experiments + all downstream. If related_work is in the impacted set → force include introduction (contribution framing depends on positioning). "Changes" means "is in the initial impacted set from AC requirements," not dynamic post-edit detection.
-6. **New results check**: Before entering revision mode editing, compare current `results.tsv` against the previous cycle. If no new `keep` rows were added and the AC's requirements specifically demanded new experiments, note this limitation explicitly in the paper ("We attempted X but found no improvement") rather than fabricating claims about nonexistent results.
+6. **New results check**: Before entering revision mode editing, read `review_state.results_row_at_cycle_start` from `nanoresearch.json`. Rows in `results.tsv` with row number `#` > `results_row_at_cycle_start` are new for this cycle. If `results_row_at_cycle_start` is null, default to `0` (treat all post-baseline rows as potentially new) and log a warning. If no new rows among these have `status == keep` and the AC's requirements specifically demanded new experiments, note this limitation explicitly in the paper ("We attempted X but found no improvement") rather than fabricating claims about nonexistent results.
 7. **Revision pass augmentation**: Pass 0 prompt adds: "Verify each resubmission requirement from EXPERIMENT_SPEC.md is addressed. Mark each as ADDRESSED or UNADDRESSABLE."
 
 Per-section review prompt addition for revision mode:

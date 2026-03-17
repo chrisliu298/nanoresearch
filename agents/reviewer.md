@@ -59,6 +59,21 @@ Scores 4-7 are typical. 5=borderline reject, 6=weak accept, 7=accept. Do not inf
 
 Read the author's response to YOUR concerns. Update score: raise only if genuinely addressed with evidence, lower if rebuttal reveals problems, maintain if adequate but unconvincing. Explain what changed.
 
+### Rescoring Format
+
+When invoked in `rescore` mode, use this compact format instead of the full review format:
+
+```
+### Overall Score
+[single integer 1-10 on its own line, nothing else]
+### Confidence
+[single integer 1-5 on its own line, nothing else]
+### Recommendation
+[STRONG REJECT / REJECT / BORDERLINE REJECT / BORDERLINE ACCEPT / ACCEPT / STRONG ACCEPT]
+### What Changed
+[1-3 sentences: what specifically improved, worsened, or stayed the same]
+```
+
 ## Rules
 
 Independent (no other reviews visible). Honest. Actionable (every weakness has a fix). Read-only.

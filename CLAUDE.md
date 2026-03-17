@@ -66,7 +66,7 @@ phase: "scout" | "loop" | "write" | "review" | "completed" | "scout_failed"
 branch: "nanoresearch/<tag>"               # set at creation
 timestamp: ISO 8601                    # updated on every phase transition and resume
 idea_summary: string                   # set after scout
-best_metric: number                    # set after loop and updated after rebuttal experiments; MUST come from keep rows only — never discard/crash rows
+best_metric: number                    # set after loop and updated after rebuttal experiments; MUST come from keep rows only — never discard/crash rows; uses metric direction from EXPERIMENT_SPEC.md (min for lower-is-better, max for higher-is-better)
 iteration_count: number               # set after loop
 venue: string | null                   # from override, passed to write and review
 codex: "on" | "off"                    # from override, default "on"
@@ -93,7 +93,7 @@ review_state: {                        # initialized on phase: "review" entry
   reviewer_dispatch: {R1..R4: "claude" | "codex" | "claude-fallback"},  # actual dispatch method per reviewer
   participating_reviewers: ["R1".."R4"],  # subset that succeeded; defines denominator for averaging
   effective_synthesis_mode: "normal" | "codex_off" | null,  # set to "codex_off" if all reviewers are same model family
-  scores: {initial: {R1..R4: number}, post_rebuttal: {R1..R4: number}},
+  scores: {initial: {R1..R4: number}, post_rebuttal: {R1..R4: number}, inherited: [string]},  # inherited: reviewer IDs (e.g., ["R3"]) whose post_rebuttal scores are carried forward from initial (not genuine rescores); excluded from STRONG_REJECT_VETO
   score_history: [{cycle, avg, decision}],  # dedup: at most one entry per cycle
   results_row_at_cycle_start: number | null,  # row count of results.tsv when this review cycle began; set for ALL cycles including cycle 1
   rebuttal_revision_progress: {current_section: number, impacted_sections: [number]} | null,  # tracks section-level progress during rebuttal revision
@@ -113,7 +113,7 @@ review_state: {                        # initialized on phase: "review" entry
 | `autoresearch.md` | loop | loop (resume), write (fallback) | Recovery doc, evolves during loop |
 | `paper/main.tex` | write | review | Paper source (reviewers read .tex; PDF is compilation artifact) |
 | `paper/reviews/section-{idx}-{name}.md` | write | write (resume) | Per-section review artifacts from drafting |
-| `paper/reviews/cycle-{N}/revision-pass-{n}/` | write | write (resume) | Cycle-scoped revision-pass review artifacts; `{model_family}-{lens}.md` |
+| `paper/reviews/cycle-{N}/revision-pass-{n}/` | write | write (resume) | Cycle-scoped revision-pass review artifacts; `slot-{1..8}-{lens}.md` (slot ID is stable across fallback) |
 | `paper/reviews/cycle-{N}/` | review | review (resume), write (revision) | Cycle-scoped review artifacts: `R{K}.md` (initial), `R{K}-rescore.md`, `area-chair.md`. Authoritative for resume |
 | `RESEARCH_MEMO.md` | write (weak results) | orchestrator | Review skipped |
 | `AUTO_REVIEW.md` | review | orchestrator, write (revision) | Full review history |
