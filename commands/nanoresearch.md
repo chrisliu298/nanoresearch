@@ -69,7 +69,7 @@ Update `nanoresearch.json`: `phase: "write"`, `best_metric: [value]`, `iteration
 
 **Precondition:** `results.tsv` exists with at least 2 rows (header + baseline). If missing, set `status: "failed"` and stop.
 
-Initialize `write_state: {sub_phase: "section_drafting", current_section: 0, revision_pass: 0}` in `nanoresearch.json` if not already present.
+Reset `write_state: {sub_phase: "section_drafting", current_section: 0, revision_pass: 0}` in `nanoresearch.json` (always reset on phase entry, not "if not already present" — ensures clean state for both initial write and resubmission cycles).
 
 Invoke `/nanoresearch:write`.
 

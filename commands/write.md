@@ -9,6 +9,8 @@ Two-sub-phase writing loop: section-by-section drafting with per-section review,
 
 Read from **CLAUDE.md**: COMPILER, MAX_COMPILE_ATTEMPTS, NUM_REVISION_PASSES, REVISION_PANEL, SECTION_REVIEW_EFFORT.
 
+Before composing any Codex MCP prompt, read **docs/prompting-codex.md** for model-specific patterns (XML tags, output contracts, verification loops) that improve GPT-5.4 output quality.
+
 ## Constants
 
 ```
@@ -33,11 +35,14 @@ Check `nanoresearch.json`:
 
 Check `nanoresearch.json.write_state`:
 - If `write_state` exists and `sub_phase != "complete"` → **resume** from recorded position.
+- If `write_state.sub_phase == "section_drafting"` and `current_section >= len(SECTION_ORDER)` → transition to `sub_phase: "revision", revision_pass: 0` (gap state recovery).
 - If `write_state.sub_phase == "section_drafting"` → resume at `current_section`. Sections with existing `.tex` files at indices < `current_section` are kept.
+- If `write_state.sub_phase == "revision"` and `revision_pass >= NUM_REVISION_PASSES` → transition to `sub_phase: "complete"` (gap state recovery).
 - If `write_state.sub_phase == "revision"` → resume at `revision_pass`.
+- If `write_state.sub_phase == "complete"` → skip write phase (already done).
 - If absent → **initialize**: `{sub_phase: "section_drafting", current_section: 0, revision_pass: 0}`.
 
-In revision mode, initialize fresh: `{sub_phase: "section_drafting", current_section: 0, revision_pass: 0}`. Detect revision mode from `review_state.cycle > 1`, not from write_state.
+Detect revision mode from `review_state.cycle > 1`, not from write_state. The orchestrator resets `write_state` when entering a new write cycle after rejection.
 
 ## Quality Gate (new paper mode only)
 
@@ -129,30 +134,33 @@ mcp__codex__codex:
     Paper facts:
     {paper_facts_packet}
 
+    Results data (ground truth):
+    {results.tsv content or relevant subset}
+
     Previously drafted sections (for consistency checking):
-    {list of completed section names + topic sentences}
+    {list of completed section names + 2-3 bullet digest each}
 
     Current section draft:
     {section .tex content}
 
     Review for:
-    1. Claims not supported by provided evidence
+    1. Claims not supported by results.tsv data (check exact numbers)
     2. Missing required content for this section type
     3. Confusing argument flow
     4. Generic filler, AI-sounding prose, overclaiming
     5. Inconsistency with previously drafted sections
-    6. Citation gaps (related_work only)
+    6. Citation gaps (for any section, not just related_work)
 
     Output exactly:
     ## Verdict: PASS | REVISE
     ## Blocking Issues
-    - [issue] → [smallest concrete fix]
+    - [location] — [issue] → [smallest concrete fix]
     ## Non-Blocking Issues
-    - [issue] → [suggested fix]
-    ## Required Edits
-    1. [specific edit instruction]
+    - [location] — [issue] → [suggested fix]
+    ## Cross-Section Risks
+    - [potential inconsistency with previously drafted sections]
 
-    Rules: max 400 words. Be specific and actionable. No praise.
+    Rules: max 500 words. Be specific and actionable. No praise. No listing things that are fine.
 ```
 
 **Codex fallback:** If Codex MCP unavailable OR `nanoresearch.json.codex == "off"`, spawn a Claude `write-critic` subagent in section mode with the same prompt content.
@@ -194,7 +202,7 @@ For each pass, launch 8 reviewers in parallel:
 
 **4 GPT-5.4 via Codex MCP** (4 separate `mcp__codex__codex` calls at `xhigh`):
 - Each assigned a lens from REVISION_LENSES.
-- Use `mcp__codex__codex-reply` with stored thread IDs from Pass 0 into Pass 1 (if available).
+- Fresh `mcp__codex__codex` call per pass (no thread continuity between passes — different pass foci would contaminate each other).
 
 Each reviewer receives:
 - Full paper `.tex` source (all sections concatenated)
@@ -226,14 +234,16 @@ Instructions:
 3. Stay in your lane. Mention out-of-lens issues only if fatal.
 
 Output exactly:
-## Issues (max 5, ranked)
-1. [CRITICAL|MAJOR|MINOR] [location] — [issue]
-   Fix: [concrete change]
+## Issues (max 5, ranked by severity)
+1. [CRITICAL|MAJOR|MINOR] [section, paragraph] — [issue]
+   Evidence: [quote or reference]
+   Fix: [smallest concrete change]
 
-## Keep As-Is
-- [things that should not be changed]
+## Cross-Cutting Problems
+- [issues spanning multiple sections]
+...or "None"
 
-Rules: Max 500 words. No scores. No generic praise.
+Rules: Max 600 words. No scores. No generic praise. Do not list things that are fine.
 In structural pass: ignore grammar unless it blocks meaning.
 In presentation pass: do not request major restructuring unless factual error.
 ```
@@ -256,7 +266,7 @@ After collecting all reviews:
 
 1. Implement fixes top-down.
 2. Compile: `${COMPILER} -pdf -interaction=nonstopmode main.tex`. Retry up to MAX_COMPILE_ATTEMPTS.
-3. After Pass 1 (presentation pass only): run format check — overfull hboxes, page count, undefined refs/citations.
+3. After the presentation pass (pass index 1): run format check — overfull hboxes, page count, undefined refs/citations.
 4. Update `write_state.revision_pass = pass + 1`. Update `nanoresearch.json`.
 
 ### Completion
@@ -271,19 +281,19 @@ After final pass:
 
 Same two-sub-phase loop with these differences:
 
-1. **Additional input**: AUTO_REVIEW.md with area chair resubmission requirements.
+1. **Additional inputs**: AUTO_REVIEW.md (full review history) and EXPERIMENT_SPEC.md `## Resubmission Requirements` section (structured AC requirements — this is the source of truth for what must be addressed).
 2. **Section drafting = section editing**: Each section is edited in-place, not rewritten. Per-section review prompt includes relevant reviewer feedback.
-3. **Targeted sections**: Determine impacted sections from AC requirements and new results.tsv rows. Always revisit: experiments, introduction, conclusion, abstract. Revisit method only if protocol changed. Revisit related_work only if positioning/novelty claim changed.
+3. **Targeted sections**: Determine impacted sections from AC requirements (in EXPERIMENT_SPEC.md) and new results.tsv rows. Always revisit: experiments, introduction, conclusion, abstract. Revisit method only if protocol changed. Revisit related_work only if positioning/novelty claim changed.
 4. **Dependency closure**: If experiments changes → force revisit introduction, conclusion, abstract. If method changes → force revisit experiments + all downstream.
-5. **Revision pass augmentation**: Pass 0 prompt adds: "Verify each area chair resubmission requirement is addressed. Mark each as ADDRESSED or UNADDRESSABLE."
+5. **Revision pass augmentation**: Pass 0 prompt adds: "Verify each resubmission requirement from EXPERIMENT_SPEC.md is addressed. Mark each as ADDRESSED or UNADDRESSABLE."
 
 Per-section review prompt addition for revision mode:
 ```
 ## Reviewer Feedback (from previous submission)
 {Relevant excerpts from AUTO_REVIEW.md for this section}
 
-## Resubmission Requirements
-{Area chair's requirements from AUTO_REVIEW.md}
+## Resubmission Requirements (from EXPERIMENT_SPEC.md)
+{Area chair's structured requirements}
 
 Edit the existing section to address these issues. Preserve parts reviewers did not criticize.
 ```

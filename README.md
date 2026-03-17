@@ -49,7 +49,8 @@ The algorithm of research is `propose → evaluate → keep/discard`, applied at
           │                     ▼
           │     ┌───────────────────────────────┐
           │     │            WRITE              │
-          │     │  results → LaTeX paper        │
+          │     │  section-by-section drafting  │
+          │     │  + 4+4 panel revision passes  │
           │     │  (or memo if results weak)    │
           │     └───────────────┬───────────────┘
           │                     │
@@ -116,6 +117,14 @@ claude mcp add codex -s user -- codex mcp-server
 /nanoresearch "topic" — skip-to-write           # skip to paper writing
 ```
 
+## Paper Writing
+
+The write phase is a two-sub-phase loop, not a one-shot draft:
+
+**Sub-phase 1: Section-by-section drafting.** Sections are written in dependency order (method → experiments → related work → introduction → conclusion → abstract). Each section gets a GPT-5.4 xhigh review gate before the next begins — catching issues early before they propagate.
+
+**Sub-phase 2: Whole-paper revision passes.** Two passes over the complete paper, each reviewed by a panel of 4 Claude write-critics + 4 GPT-5.4 critics. Pass 1 fixes structural issues (claims-evidence alignment, narrative coherence). Pass 2 fixes presentation issues (de-AI polish, notation, formatting). The panel uses 4 lenses (evidence, structure, positioning, clarity) × 2 model families for blind-spot diversity.
+
 ## Peer Review
 
 The review phase simulates a real ML venue review process:
@@ -135,18 +144,19 @@ After initial reviews, the system writes author rebuttals, runs additional exper
 ## Architecture
 
 ```
-nanoresearch/                              8 components, ~780 lines
+nanoresearch/                              9 components
   .claude-plugin/plugin.json
   CLAUDE.md                            constants + state schema + file contracts
   commands/
-    nanoresearch.md                        /nanoresearch — full pipeline
+    nanoresearch.md                    /nanoresearch — full pipeline orchestrator
     scout.md                           /nanoresearch:scout — literature + ideation + spec
     loop.md                            /nanoresearch:loop — autoresearch kernel
-    write.md                           /nanoresearch:write — results → paper or memo
+    write.md                           /nanoresearch:write — section drafting + revision loop
     review.md                          /nanoresearch:review — peer review cycle
   agents/
-    reviewer.md                        parameterized reviewer (4 personas)
-    area-chair.md                      meta-review + decision
+    write-critic.md                    parameterized writing critic (4 lenses)
+    reviewer.md                        parameterized venue reviewer (4 personas)
+    area-chair.md                      meta-review + accept/reject decision
 ```
 
 
@@ -172,7 +182,7 @@ Both are valuable. A memo documenting why something doesn't work saves future re
 |-------|----------|------------|
 | Scout | 15-30 min | No |
 | Loop | 1-8 hours | Yes |
-| Write | 30-60 min | Yes |
+| Write | 45-90 min | Yes |
 | Review (per cycle) | 30-90 min | Yes |
 
 Run scout interactively, launch the rest before bed, wake up to results.
@@ -184,6 +194,8 @@ All constants live in `CLAUDE.md`. Key defaults:
 | Constant | Default | What it controls |
 |----------|---------|-----------------|
 | `EXPERIMENT_BUDGET_HOURS` | 4 | Wall-clock cap for the experiment loop |
+| `NUM_REVISION_PASSES` | 2 | Whole-paper revision passes (structural + presentation) |
+| `REVISION_PANEL` | 4+4 | Write-critics per revision pass (Claude + GPT-5.4) |
 | `MAX_REVIEW_CYCLES` | 2 | Submit-review-rebuttal cycles before stopping |
 | `ACCEPTANCE_THRESHOLD` | 6.0 | Average score needed for acceptance |
 | `REVIEWER_MODEL` | gpt-5.4 | External model for GPT-5.4 reviewers |

@@ -25,8 +25,8 @@ The algorithm of research is `propose → evaluate → keep/discard`, applied at
 
 ### Write Phase
 
-- **NUM_REVISION_PASSES = 2** — Whole-paper revision passes with Prism-style review. Pass 1 catches structural issues, pass 2 catches remaining presentation issues.
-- **REVISION_PANEL = 4+4** — 4 Claude write-critic subagents + 4 GPT-5.4 xhigh via relay per revision pass.
+- **NUM_REVISION_PASSES = 2** — Whole-paper revision passes with Prism-style review. Pass 0 (structural) catches structural issues, pass 1 (presentation) catches remaining presentation issues.
+- **REVISION_PANEL = 4+4** — 4 Claude write-critic subagents + 4 GPT-5.4 xhigh via Codex MCP per revision pass.
 - **SECTION_REVIEW_EFFORT = `xhigh`** — Codex effort level for per-section review during drafting.
 
 ### Paper
