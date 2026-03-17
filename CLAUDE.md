@@ -8,11 +8,15 @@ The algorithm of research is `propose → evaluate → keep/discard`, applied at
 
 ### Reviewer
 
-- **REVIEWER_MODEL = `gpt-5.4`** — External model via Codex MCP for brainstorming and review.
+- **REVIEWER_MODEL = `gpt-5.4`** — External model via Codex MCP for brainstorming and review. **Must always use `xhigh` reasoning effort. No other effort level is permitted.**
 
 ### Experiment Loop
 
 - **TIMEOUT_MINUTES = 10** — Kill runs exceeding this.
+
+### Scout
+
+- **SCOUT_BUDGET_MINUTES = 30** — Wall-clock cap for the entire scout phase. On expiry, write SCOPING_MEMO.md with current progress.
 
 ### Peer Review
 
@@ -27,12 +31,16 @@ The algorithm of research is `propose → evaluate → keep/discard`, applied at
 
 - **NUM_REVISION_PASSES = 2** — Whole-paper revision passes with Prism-style review. Pass 0 (structural) catches structural issues, pass 1 (presentation) catches remaining presentation issues.
 - **REVISION_PANEL = 4+4** — 4 Claude write-critic subagents + 4 GPT-5.4 xhigh via Codex MCP per revision pass.
-- **SECTION_REVIEW_EFFORT = `xhigh`** — Codex effort level for per-section review during drafting.
+- **SECTION_REVIEW_EFFORT = `xhigh`** — Codex effort level for per-section review during drafting. This is the only allowed effort level for all GPT-5.4 usage.
 
 ### Paper
 
 - **COMPILER = `latexmk`**
 - **MAX_COMPILE_ATTEMPTS = 3**
+
+### Enforced Rule: GPT-5.4 Effort Level
+
+- **All GPT-5.4 calls MUST use `config: {"model_reasoning_effort": "xhigh"}`**. No other effort level (`none`, `low`, `medium`, `high`) is permitted. This applies to every `mcp__codex__codex` call across all phases (scout, write, review). No exceptions, no compromise.
 
 ### Pipeline
 
@@ -55,6 +63,9 @@ iteration_count: number               # set after loop
 venue: string | null                   # from override, passed to write and review
 codex: "on" | "off"                    # from override, default "on"
 decision: "accepted" | "rejected" | "memo" | null
+scout_state: {                         # initialized on phase: "scout" entry
+  sub_phase: "survey" | "ideate" | "specify",
+}
 write_state: {                         # initialized on phase: "write" entry
   sub_phase: "section_drafting" | "revision" | "complete",
   current_section: number,             # 0-indexed, tracks section_drafting progress
@@ -62,7 +73,7 @@ write_state: {                         # initialized on phase: "write" entry
 }
 review_state: {                        # initialized on phase: "review" entry
   cycle: number,                       # starts at 1, incremented on resubmission
-  sub_phase: "initial_review" | "rebuttal" | "rescoring" | "area_chair" | "decision_gate",
+  sub_phase: "initial_review" | "rebuttal_triage" | "rebuttal_experiments" | "rebuttal_revision" | "rebuttal_response" | "rescoring" | "area_chair" | "decision_gate",
   decision: "accepted" | "rejected" | null,  # per-cycle decision from AC
   codex_threads: {R3?: string, R4?: string},  # present only when Codex used
   scores: {initial: {R1..R4: number}, post_rebuttal: {R1..R4: number}},
@@ -75,6 +86,7 @@ review_state: {                        # initialized on phase: "review" entry
 | File | Producer | Consumer | Notes |
 |------|----------|----------|-------|
 | `nanoresearch.json` | orchestrator | all phases | Single state file |
+| `LANDSCAPE.md` | scout | scout (resume), write (context) | Literature survey checkpoint; produced after survey sub-phase |
 | `IDEA.md` | scout | write | Research plan |
 | `EXPERIMENT_SPEC.md` | scout (or review on reject) | loop, write (fallback) | Experiment contract; review replaces (not appends) resubmission requirements |
 | `SCOPING_MEMO.md` | scout (failure) | orchestrator | Pipeline halts |

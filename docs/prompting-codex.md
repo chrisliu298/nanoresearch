@@ -213,16 +213,23 @@ Reserve the relay prompt body for what changes from task to task: the goal, cont
 
 ## Reasoning Effort Selection
 
-Choose the reasoning effort level based on the task you are delegating.
+**Enforced rule: All GPT-5.4 calls in nanoresearch MUST use `xhigh`. No other effort level is permitted. No exceptions.**
 
-| Level | When to use |
-|-------|-------------|
-| `none` | Fast, cost/latency-sensitive tasks where the model does not need to think. Best for execution-heavy work: workflow steps, field extraction, triage, short structured transforms. |
-| `low` | Latency-sensitive tasks where a small amount of thinking can produce a meaningful accuracy gain, especially with complex instructions. |
-| `medium` or `high` | Reserve for tasks that truly require stronger reasoning and can absorb the latency and cost tradeoff. Choose between them based on how much performance gain the task gets from additional reasoning. Start with `medium` for research-heavy work. |
-| `xhigh` | Good default for agentic, reasoning-heavy tasks where correctness and thoroughness matter. Especially valuable for tasks that require one-shot correctness — where there is no interactive feedback loop and the output must be right the first time. Use freely for multi-step research, complex debugging, code review, and any task where deeper thinking improves outcomes. Only drop to a lower level when speed or cost is the primary concern. |
+Every `mcp__codex__codex` call must include `config: {"model_reasoning_effort": "xhigh"}`. This applies to all phases — scout brainstorming, per-section write reviews, revision panel reviews, and peer review dispatches.
 
-**Escalation rule**: Both prompt quality and reasoning effort matter. Improve the prompt first — add an `<output_contract>`, `<completeness_contract>`, or `<verification_loop>` — but don't hesitate to use `xhigh` when the task is complex or correctness-critical. If the model feels too literal or stops at the first plausible answer, combine a dig-deeper nudge with higher effort:
+**`mcp__codex__codex-reply` calls** inherit the originating thread's model and effort settings. They are permitted only when the thread was created by an `mcp__codex__codex` call configured with `xhigh`. No explicit effort config is needed on reply calls, but the originating call must have set xhigh.
+
+For reference, the available effort levels in the Codex API are listed below, but only `xhigh` is authorized for use:
+
+| Level | Status in nanoresearch |
+|-------|----------------------|
+| `none` | **NOT ALLOWED** |
+| `low` | **NOT ALLOWED** |
+| `medium` | **NOT ALLOWED** |
+| `high` | **NOT ALLOWED** |
+| `xhigh` | **REQUIRED** — the only permitted effort level for all GPT-5.4 usage |
+
+**Prompt quality still matters.** Improve the prompt first — add an `<output_contract>`, `<completeness_contract>`, or `<verification_loop>` — and always pair it with `xhigh` effort. If the model feels too literal or stops at the first plausible answer, combine a dig-deeper nudge with `xhigh`:
 
 ```xml
 <dig_deeper_nudge>

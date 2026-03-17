@@ -20,12 +20,13 @@ If `EXPERIMENT_SPEC.md` exists, read it for: metric, sanity metric, command, ext
 
 If `autoresearch.md` and `results.tsv` exist on a `nanoresearch/*` branch, AND `EXPERIMENT_SPEC.md` does NOT contain `## Rebuttal Addendum` or `## Resubmission Requirements`:
 1. `git checkout nanoresearch/<tag>`
-2. Read `autoresearch.md` for context
-3. Read only the last `keep` row in `results.tsv` for the current best
-4. **Verify HEAD is safe:** find the last `keep` row in `results.tsv` (if no `keep` row exists, use the baseline row #0). Check if that commit is an ancestor of HEAD: `git merge-base --is-ancestor <keep-commit> HEAD`. If YES → HEAD is safe (may be a checkpoint commit on top of the keep). If NO → crash left HEAD on an unevaluated or divergent commit; `git reset --hard <keep-commit>`.
-5. Read `git log --oneline -20`
-6. Read all in-scope files
-7. Continue the loop. Do not re-run baseline.
+2. Read `autoresearch.md` for context.
+3. **Check for interrupted exploration episode:** If `autoresearch.md` contains `## Active Exploration`, read the `start_commit` from that section. Reset to it: `git reset --hard <start_commit>`. Restore `.episode-bak` files if they exist (`mv results.tsv.episode-bak results.tsv` etc.). Remove the `## Active Exploration` section from `autoresearch.md`. Log: "Abandoned interrupted exploration episode."
+4. Read only the last `keep` row in `results.tsv` for the current best.
+5. **Verify HEAD is safe:** find the last `keep` row in `results.tsv` (if no `keep` row exists, use the baseline row #0). Check if that commit is an ancestor of HEAD: `git merge-base --is-ancestor <keep-commit> HEAD`. If YES → HEAD is safe (may be a checkpoint commit on top of the keep). If NO → crash left HEAD on an unevaluated or divergent commit; `git reset --hard <keep-commit>`.
+6. Read `git log --oneline -20`
+7. Read all in-scope files
+8. Continue the loop. Do not re-run baseline.
 
 ### Interactive (standalone)
 
@@ -91,9 +92,45 @@ Each iteration:
 - Removing code + equal/better → definitely keep.
 - Equal metric + simpler code → keep.
 
+### Multi-Step Exploration (enabling refactors)
+
+Some improvements require 2-3 coordinated edits that look bad individually. When you have a hypothesis that needs multiple steps:
+
+1. **Start an exploration episode.** Record `exploration_start_commit = HEAD` and `exploration_budget = 3` (max commits in the episode). **Persist to `autoresearch.md`** under `## Active Exploration`: start commit hash, budget, and hypothesis. Back up state files before the first step: `cp results.tsv results.tsv.episode-bak && cp autoresearch.md autoresearch.md.episode-bak && cp nanoresearch.json nanoresearch.json.episode-bak`.
+2. **Commit each step** normally (steps 1-4 of the loop), but **skip steps 5-10** (Run through Decide) for intermediate commits. Do NOT log intermediate steps to `results.tsv` — keep episode-internal notes in `autoresearch.md` only.
+3. **Evaluate at the episode end** (after all steps are committed, or after the exploration budget is exhausted). Run the command once and extract metrics. Record a single row in `results.tsv` with the episode's final metric and a description summarizing all steps.
+4. **Decide on the whole episode:**
+   - Improved → `keep` (all commits stay). Remove `## Active Exploration` from `autoresearch.md`. Delete `.episode-bak` files.
+   - Not improved → `discard` the entire episode: restore from episode backups (`mv results.tsv.episode-bak results.tsv && mv autoresearch.md.episode-bak autoresearch.md && mv nanoresearch.json.episode-bak nanoresearch.json`), then `git reset --hard <exploration_start_commit>`.
+5. **Limit:** Max 1 exploration episode per 5 total iterations (counting episode commits toward the 5). Do not start an episode if it would span a checkpoint boundary (iteration divisible by 10). Defer to after the checkpoint.
+
+**Crash recovery:** On resume, if `autoresearch.md` contains `## Active Exploration`, an episode was interrupted. Read the `start_commit` from that section. Reset to it: `git reset --hard <start_commit>`, restore `.episode-bak` files if they exist, remove `## Active Exploration`. The episode is abandoned — it can be retried from scratch.
+
+Use exploration episodes when: the next improvement clearly requires setup (refactoring, adding instrumentation, restructuring data flow) before the payoff.
+
+### Strategy Checkpoint (every 10 iterations)
+
+At every 10th iteration (aligned with the git checkpoint), perform a structured strategy review. **Do not run during an active exploration episode** — defer to after the episode concludes. If the stuck recovery protocol was triggered within the last 5 iterations, skip the direction-change analysis and just record the trajectory.
+
+1. **Classify trajectory:** Summarize the last 10 evaluated experiments (exclude any abandoned exploration episodes) in a table: approach, result, likely cause.
+2. **Assess momentum:** `making_progress` (2+ keeps in last 10) | `plateau` (1 keep) | `stuck` (0 keeps).
+3. **If plateau or stuck:**
+   a. Identify the common thread across recent failures.
+   b. Generate 3 alternative directions with explicit predictions for each.
+   c. Commit to one direction for the next 5 iterations.
+4. Record the strategy assessment in `autoresearch.md` under `## Strategy Checkpoints`.
+
 ### When Stuck (3+ consecutive reverts)
 
-Re-read source files. Read local papers in `papers/` or `literature/` if present. Combine near-misses. Try radical changes. Reason about bottlenecks. Last resort: rewind to earlier successful commit. **NEVER give up. Think harder.**
+Structured recovery protocol — do NOT just "think harder":
+
+1. **Failure analysis:** Produce a table of the last 5+ failed approaches: what was tried, what happened, likely root cause.
+2. **Pattern identification:** What do the failures have in common? Is the bottleneck in the model, data, evaluation, or approach?
+3. **Direction change:** Generate 3 fundamentally different directions (not variations of the same idea). For each, state the predicted outcome and why it avoids the identified pattern.
+4. **Commit to one** and run it. If it also fails, try the next. If all 3 fail, consider an exploration episode for a multi-step approach.
+5. **Last resort:** Re-read source files. Read local papers in `papers/` or `literature/` if present. Rewind to an earlier successful commit and try a completely different approach.
+
+**NEVER give up. But think differently, not just harder.**
 
 ## Logging
 
@@ -105,7 +142,8 @@ Re-read source files. Read local papers in `papers/` or `literature/` if present
 
 - `#` — sequential experiment number (0 = baseline). On resume, continue from `last # + 1`.
 - `timestamp` — ISO 8601 with seconds (e.g., `2026-03-16T14:30:05`).
-- `NA` for crashes. Do NOT commit `run.log`. `results.tsv` is committed at phase boundaries and every 10 iterations (checkpoint).
+- `status` values: `keep` | `discard` | `crash`. Exploration episodes log one summary row at episode end (keep or discard), not per intermediate step.
+- `metric`/`sanity` — `NA` for crashes. Do NOT commit `run.log`. `results.tsv` is committed at phase boundaries and every 10 iterations (checkpoint).
 
 ## Constraints
 

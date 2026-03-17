@@ -23,15 +23,15 @@ Check for `nanoresearch.json` in the project root:
 - If `status` is `"in_progress"` AND topic matches AND within 24 hours → **resume** from recorded phase.
 
 **On fresh start:**
-1. Clean stale artifacts: `rm -f IDEA.md EXPERIMENT_SPEC.md results.tsv autoresearch.md AUTO_REVIEW.md RESEARCH_MEMO.md SCOPING_MEMO.md && rm -rf paper/`.
-2. Create `nanoresearch.json` per the state schema: `topic: "<parsed topic from $ARGUMENTS>"`, `status: "in_progress"`, `phase: "scout"`, `branch: "nanoresearch/<tag>"`, `timestamp: <now ISO 8601>`, `venue: null`, `codex: "on"`, `decision: null`.
+1. Clean stale artifacts: `rm -f LANDSCAPE.md IDEA.md EXPERIMENT_SPEC.md results.tsv autoresearch.md AUTO_REVIEW.md RESEARCH_MEMO.md SCOPING_MEMO.md && rm -rf paper/`.
+2. Create `nanoresearch.json` per the state schema: `topic: "<parsed topic from $ARGUMENTS>"`, `status: "in_progress"`, `phase: "scout"`, `branch: "nanoresearch/<tag>"`, `timestamp: <now ISO 8601>`, `venue: null`, `codex: "on"`, `decision: null`, `scout_state: {sub_phase: "survey"}`.
 3. Resolve the default branch (`git symbolic-ref refs/remotes/origin/HEAD` or fall back to `main`). Then `git checkout -b nanoresearch/<tag> <default-branch>` (tag = date, e.g., `mar16`). If branch exists, append sequence number: `mar16-2`.
 
 **On resume:**
 1. Read `branch` from `nanoresearch.json`.
 2. `git checkout <branch>` (not `-b`).
 3. Update `timestamp` to now.
-4. If resuming `phase: "scout"` → clean partial scout artifacts: `rm -f IDEA.md EXPERIMENT_SPEC.md SCOPING_MEMO.md`.
+4. If resuming `phase: "scout"` → check `scout_state.sub_phase`. If `"survey"`, clean all: `rm -f LANDSCAPE.md IDEA.md EXPERIMENT_SPEC.md SCOPING_MEMO.md`. If `"ideate"`, preserve `LANDSCAPE.md`, clean: `rm -f IDEA.md EXPERIMENT_SPEC.md SCOPING_MEMO.md`. If `"specify"`, preserve `LANDSCAPE.md` and `IDEA.md`, clean: `rm -f EXPERIMENT_SPEC.md SCOPING_MEMO.md`.
 5. Jump to the recorded phase.
 
 ## Pipeline
@@ -48,7 +48,7 @@ If scout produces neither `EXPERIMENT_SPEC.md` nor `SCOPING_MEMO.md` → update 
 
 Update `nanoresearch.json`: `phase: "loop"`, `idea_summary: [title]`, `timestamp: <now>`.
 
-**Commit:** `git add IDEA.md EXPERIMENT_SPEC.md nanoresearch.json && git commit -m "scout: [idea title]"`.
+**Commit:** `git add LANDSCAPE.md IDEA.md EXPERIMENT_SPEC.md nanoresearch.json && git commit -m "scout: [idea title]"`.
 
 ### Phase 2: Experiment Loop
 

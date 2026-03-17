@@ -117,7 +117,7 @@ For related_work and any section needing citations:
 
 ### Step 3: Per-Section Review
 
-Submit section to GPT-5.4 via `mcp__codex__codex` at `xhigh` effort:
+Submit section to GPT-5.4 via `mcp__codex__codex` at `xhigh` effort (the only permitted effort level — no other level is allowed):
 
 ```
 mcp__codex__codex:
@@ -200,7 +200,7 @@ For each pass, launch 8 reviewers in parallel:
 **4 Claude write-critic subagents** (`run_in_background: true`):
 - Each spawned with the `write-critic` agent, a different lens from REVISION_LENSES, and the pass focus.
 
-**4 GPT-5.4 via Codex MCP** (4 separate `mcp__codex__codex` calls at `xhigh`):
+**4 GPT-5.4 via Codex MCP** (4 separate `mcp__codex__codex` calls at `xhigh` — the only permitted effort level):
 - Each assigned a lens from REVISION_LENSES.
 - Fresh `mcp__codex__codex` call per pass (no thread continuity between passes — different pass foci would contaminate each other).
 
