@@ -66,10 +66,11 @@ phase: "scout" | "loop" | "write" | "review" | "completed" | "scout_failed"
 branch: "nanoresearch/<tag>"               # set at creation
 timestamp: ISO 8601                    # updated on every phase transition and resume
 idea_summary: string                   # set after scout
-best_metric: number                    # set after loop; MUST come from keep rows only — never discard/crash rows
+best_metric: number                    # set after loop and updated after rebuttal experiments; MUST come from keep rows only — never discard/crash rows
 iteration_count: number               # set after loop
 venue: string | null                   # from override, passed to write and review
 codex: "on" | "off"                    # from override, default "on"
+pre_loop_stash_ref: string | null      # stash ref for user's dirty worktree; set before loop, cleared after stash pop
 decision: "accepted" | "rejected" | "memo" | null
 budget_override: string | null         # persisted from override (e.g., "8h"), survives resume
 loop_override: number | null           # persisted from override (e.g., 50), survives resume
@@ -108,10 +109,11 @@ review_state: {                        # initialized on phase: "review" entry
 | `IDEA.md` | scout | write | Research plan |
 | `EXPERIMENT_SPEC.md` | scout (or review on reject) | loop, write (fallback) | Experiment contract; review replaces (not appends) resubmission requirements |
 | `SCOPING_MEMO.md` | scout (failure) | orchestrator | Pipeline halts |
-| `results.tsv` | loop | write, review | Columns: #, timestamp, commit, metric, sanity, status, description. Committed at phase boundaries and every 10 loop iterations |
+| `results.tsv` | loop | write, review | Columns: #, timestamp, commit, metric, sanity, status, description. Row #0 (baseline) has `status=keep`. Committed on every keep decision, at phase boundaries, and every 10 loop iterations |
 | `autoresearch.md` | loop | loop (resume), write (fallback) | Recovery doc, evolves during loop |
 | `paper/main.tex` | write | review | Paper source (reviewers read .tex; PDF is compilation artifact) |
-| `paper/reviews/*.md` | write | write (resume) | Per-section and per-pass review artifacts; raw reviewer feedback on disk, not in nanoresearch.json |
+| `paper/reviews/section-{idx}-{name}.md` | write | write (resume) | Per-section review artifacts from drafting |
+| `paper/reviews/cycle-{N}/revision-pass-{n}/` | write | write (resume) | Cycle-scoped revision-pass review artifacts; `{model_family}-{lens}.md` |
 | `paper/reviews/cycle-{N}/` | review | review (resume), write (revision) | Cycle-scoped review artifacts: `R{K}.md` (initial), `R{K}-rescore.md`, `area-chair.md`. Authoritative for resume |
 | `RESEARCH_MEMO.md` | write (weak results) | orchestrator | Review skipped |
 | `AUTO_REVIEW.md` | review | orchestrator, write (revision) | Full review history |

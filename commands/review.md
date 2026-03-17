@@ -16,20 +16,24 @@ One submission cycle: 4 reviews → rebuttal → rescoring → area chair decisi
 ## Resumption
 
 Check `nanoresearch.json.review_state`:
-- Validate `review_state` has required fields (`cycle`, `sub_phase`, `scores`, `score_history`, `reviewer_dispatch`). If any field is missing, re-initialize it with care:
-  - `score_history`: if missing, attempt to reconstruct from `## Submission Cycle` headers in `AUTO_REVIEW.md`; if impossible, initialize to `[]` with a warning. **Never blindly reset** — it accumulates across cycles.
+- If `review_state` does not exist at all, initialize from scratch: `{cycle: 1, sub_phase: "initial_review", decision: null, codex_threads: {}, reviewer_dispatch: {}, participating_reviewers: [], effective_synthesis_mode: null, scores: {initial: {}, post_rebuttal: {}}, score_history: [], results_row_at_cycle_start: <current row count of results.tsv, excluding header>, rebuttal_revision_progress: null}`.
+- Validate `review_state` has required fields (`cycle`, `sub_phase`, `scores`, `score_history`, `reviewer_dispatch`, `participating_reviewers`, `results_row_at_cycle_start`, `rebuttal_revision_progress`). If any field is missing, re-initialize it with care:
+  - `score_history`: if missing, attempt to reconstruct from `## Submission Cycle` headers in `AUTO_REVIEW.md` (parse each header → find `### Decision` → extract decision; find `### Scores` table → compute average from "Post" column over participating reviewers); if impossible, initialize to `[]` with a warning. **Never blindly reset** — it accumulates across cycles.
   - `scores`, `codex_threads`, `reviewer_dispatch`, `decision`: safe to re-initialize to defaults.
-  - `cycle`: if missing, infer from `len(score_history) + 1`.
-- **Reconciliation step (ALWAYS runs on resume):** Before skipping any reviewer dispatch, parse `paper/reviews/cycle-{N}/` for already-completed review artifacts. Rebuild missing `scores.initial`, `reviewer_dispatch`, `codex_threads`, and `participating_reviewers` entries from saved files. Only treat a reviewer as complete when both the raw review file AND its structured JSON fields are present.
+  - `participating_reviewers`: reconstruct from `paper/reviews/cycle-{N}/` — any reviewer with both a file `R{K}.md` on disk and a score in `scores.initial` is a participant. If impossible, initialize to `[]`.
+  - `results_row_at_cycle_start`: if missing, first attempt to reconstruct from the git commit at the cycle's review entry; if impossible, default to `0` with a warning (treats all post-baseline rows as potentially new).
+  - `rebuttal_revision_progress`: if missing and `sub_phase` is `"rebuttal_revision"`, re-initialize to `{current_section: 0, impacted_sections: null}` (will be recomputed from the rebuttal plan). If `sub_phase` is not `"rebuttal_revision"`, safe to set to `null`.
+  - `cycle`: if missing and `score_history` is empty, default to `1`. If `score_history` is non-empty: if the latest entry has a decision, infer `max(entry.cycle for entry in score_history) + 1`; otherwise `max(entry.cycle for entry in score_history)` (current cycle still active).
+- **Reconciliation step (ALWAYS runs on resume):** Before skipping any reviewer dispatch, parse `paper/reviews/cycle-{N}/` for already-completed review artifacts. Rebuild missing `scores.initial`, `reviewer_dispatch`, `codex_threads`, and `participating_reviewers` entries from saved files. Also rebuild `scores.post_rebuttal` from existing `R{K}-rescore.md` files (validate rescoring schema: must contain `### Overall Score` with parseable integer). Only treat a reviewer as complete when both the raw review file AND its structured JSON fields are present. Update `participating_reviewers` incrementally as each reviewer is confirmed. During Phase 3 (rescoring), skip re-dispatching reviewers whose valid `R{K}-rescore.md` already exists and whose `scores.post_rebuttal.R{K}` is populated.
 - If `sub_phase` exists and `cycle` matches current cycle → resume from recorded sub-phase.
   - `initial_review` → start Phase 1. Skip re-dispatching reviewers whose reviews exist in `paper/reviews/cycle-{N}/R{K}.md` AND whose scores are in `review_state.scores.initial`.
   - `rebuttal_triage` → start Step 2a.
   - `rebuttal_experiments` → start Step 2b.
-  - `rebuttal_revision` → start Step 2c.
+  - `rebuttal_revision` → start Step 2c. If `rebuttal_revision_progress` is null or `impacted_sections` is null, recompute from `paper/reviews/cycle-{N}/rebuttal-plan.md` and new results.tsv rows before proceeding.
   - `rebuttal_response` → start Step 2d.
   - `rescoring` → start Phase 3.
   - `area_chair` → start Phase 4. If `paper/reviews/cycle-{N}/area-chair.md` exists, consume it instead of re-running AC.
-  - `decision_gate` → start Phase 5.
+  - `decision_gate` → start Phase 5. If `review_state.decision` is null, fall back to `area_chair` sub-phase (re-run Phase 4).
 - Otherwise → start from Phase 1.
 
 ## Reviewer Panel
@@ -49,9 +53,9 @@ Claude reviewers can read code + `results.tsv`. GPT-5.4 reviewers see paper text
 
 Concatenate all `.tex` section files into paper text. Create `paper/reviews/cycle-{N}/` directory for this cycle's artifacts.
 
-**Cycle header:** Append `## Submission Cycle {N} — Initial Reviews` to `AUTO_REVIEW.md` BEFORE dispatching any reviewer. This provides a machine-parseable cycle boundary for resume logic.
+**Cycle header (idempotent):** Check if `AUTO_REVIEW.md` already contains `## Submission Cycle {N}`. If not, append `## Submission Cycle {N} — Initial Reviews`. If already present (crash-resume), skip. This provides a machine-parseable cycle boundary for resume logic without creating duplicates on resume.
 
-Launch R1, R2 via Agent tool (`run_in_background: true`). Launch R3, R4 via `mcp__codex__codex` (REVIEWER_MODEL, `config: {"model_reasoning_effort": "xhigh"}` — xhigh is the only permitted effort level, no exceptions).
+Launch R1, R2 via Agent tool (`run_in_background: true`). Include in the R1/R2 Agent prompt: "Read `results.tsv` to verify claims against experimental data. Baseline metric: {value}. Best kept metric: {value}." This ensures Claude reviewers actively check claims against ground truth. Launch R3, R4 via `mcp__codex__codex` (REVIEWER_MODEL, `config: {"model_reasoning_effort": "xhigh"}` — xhigh is the only permitted effort level, no exceptions).
 
 **R3/R4 Codex prompt template** (use XML tags per docs/prompting-codex.md):
 
@@ -90,22 +94,22 @@ Before finalizing:
 Each reviewer prompt uses the calibration and format defined in `agents/reviewer.md`. R3/R4 also receive the `results_summary` (baseline + best kept metric + total experiments) so the Skeptic can verify overclaiming.
 
 **After each successful reviewer dispatch**, immediately persist its result:
-- **Validate review schema** (not just score): verify all mandated headings exist (`### Summary`, `### Overall Score`, `### Confidence`, `### Weaknesses`), score is a parseable integer 1-10, confidence is a parseable integer 1-5, at least one weakness with severity tag exists. If schema validation fails, retry once; if still invalid, fall back to Claude subagent.
+- **Validate review schema** (not just score): verify all mandated headings exist (`### Summary`, `### Overall Score`, `### Confidence`, `### Weaknesses`, `### Recommendation`), score is a parseable integer 1-10, confidence is a parseable integer 1-5, at least one weakness with severity tag exists, recommendation is one of the defined categories. If schema validation fails, retry once; if still invalid, fall back to Claude subagent.
 - Save the review text to both `AUTO_REVIEW.md` (append under cycle header) and `paper/reviews/cycle-{N}/R{K}.md` (cycle-scoped file for resume).
 - Update `review_state.scores.initial.R<N>` with the extracted score.
 - Update `review_state.reviewer_dispatch.R<N>` to `"claude"`, `"codex"`, or `"claude-fallback"`.
 - If Codex: save `review_state.codex_threads.R<N>` with the threadId. When re-dispatching a reviewer on resume, always overwrite `codex_threads.R<N>` with the new threadId.
 - Commit: `git add AUTO_REVIEW.md paper/reviews/ nanoresearch.json && git commit -m "review: R<N> complete"`.
 
-**Score extraction:** Each review must contain `### Overall Score` followed by a single integer 1-10 on its own line. If not parseable, issue a **fresh** `mcp__codex__codex` call (not `codex-reply`) with the score format constraint in the `<output_contract>`. If still unparseable, extract the nearest integer (round 6.5→7, take midpoint of ranges) before falling back to Claude.
+**Score extraction:** Each review must contain `### Overall Score` followed by a single integer 1-10 on its own line. If not parseable, issue a **fresh** `mcp__codex__codex` call (not `codex-reply`) with the score format constraint in the `<output_contract>`. If still unparseable after retry, do NOT coerce or fabricate a score — fall back to Claude subagent redispatch. Only persist scores that satisfy the exact output contract (single integer 1-10).
 
 Retry failures once. If Codex reviewers fail after retry, re-dispatch as Claude subagents with the same persona and record `reviewer_dispatch.R<N>: "claude-fallback"`.
 
-**Minimum panel (coverage-based):** At least 3 reviewers must succeed AND at least one must cover methodology/empirics (R1 or R2) and at least one must cover novelty/skepticism (R3 or R4). Hard fail below 3. **Record the participating reviewer set** in `review_state` (e.g., `participating_reviewers: ["R1", "R2", "R4"]`) — this set defines the denominator for all subsequent averaging.
+**Minimum panel (coverage-based):** At least 3 reviewers must succeed AND at least one must cover methodology/empirics (R1 or R2) and at least one must cover novelty/skepticism (R3 or R4). **Hard fail below 3:** set `status: "failed"` in `nanoresearch.json` with reason "insufficient_review_panel", append the failure to `AUTO_REVIEW.md`, commit, and stop. Do NOT convert panel insufficiency into `decision: "rejected"` — infrastructure failures must not be recorded as scientific rejections. **Record the participating reviewer set** in `review_state` (e.g., `participating_reviewers: ["R1", "R2", "R4"]`) — update incrementally as each reviewer completes. This set defines the denominator for all subsequent averaging.
 
 **Cross-model diversity check:** After all dispatches complete, inspect `reviewer_dispatch`. If all successful reviewers are the same model family (all Claude, including fallbacks), log a warning and set `review_state.effective_synthesis_mode: "codex_off"` so synthesis rules use the `codex: off` heuristic ("3+ of N reviewers → must-fix") for this cycle, even if `codex` is `"on"` in nanoresearch.json.
 
-Update `nanoresearch.json`: `review_state.sub_phase: "rebuttal_triage"`. Commit: `git add AUTO_REVIEW.md nanoresearch.json && git commit -m "review: initial scores"`.
+Update `nanoresearch.json`: `review_state.sub_phase: "rebuttal_triage"`. Commit: `git add AUTO_REVIEW.md nanoresearch.json && { git diff --cached --quiet || git commit -m "review: initial scores"; }`.
 
 ## Phase 2: Rebuttal
 
@@ -129,21 +133,23 @@ Skip if no `experiment_gap` items in the rebuttal plan.
 
 1. Replace (not append) the `## Rebuttal Addendum` section in `EXPERIMENT_SPEC.md` with targeted experiments. If no such section exists, append it. This ensures idempotency on crash-retry.
 2. **Validate spec integrity:** After patching, verify that immutable core fields (`## Command`, `## Metric Extraction`, `## Files in Scope`, `## Constraints`) still exist and are unchanged from pre-patch. If any are missing or altered, restore from the last committed version and re-patch. This guards against LLM accidentally rewriting the spec.
-3. **Commit the spec before invoking the loop** — the loop's discard path uses `git reset --hard` which would destroy uncommitted changes: `git add EXPERIMENT_SPEC.md && git commit -m "review: rebuttal spec"`.
-4. **Reset loop timer:** Set `loop_started_at: null` in `nanoresearch.json` so the rebuttal loop gets a fresh budget timer (the original value is stale from Phase 2).
+3. **Reset loop timer:** Set `loop_started_at: null` in `nanoresearch.json` so the rebuttal loop gets a fresh budget timer (the original value is stale from Phase 2).
+4. **Commit the spec and timer reset before invoking the loop** — the loop's discard path uses `git reset --hard` which would destroy uncommitted changes: `git add EXPERIMENT_SPEC.md nanoresearch.json && git commit -m "review: rebuttal spec"`. Including `nanoresearch.json` ensures the timer reset survives crashes.
 5. Invoke `/nanoresearch:loop ${REBUTTAL_EXPERIMENT_BUDGET_MINUTES}m`. The loop detects the `## Rebuttal Addendum` in `EXPERIMENT_SPEC.md` and enters fresh-from-spec mode automatically (skips resume, skips baseline if results.tsv has one).
+
+**Post-loop validation:** Re-read `nanoresearch.json`. If `status == "failed"` (rebuttal loop preflight/baseline/runtime failure), commit and stop — do NOT proceed to rebuttal revision. Infrastructure failures must not be papered over.
 
 Update `nanoresearch.json`: `review_state.sub_phase: "rebuttal_revision"`.
 
-Commit: `git add results.tsv autoresearch.md nanoresearch.json && git diff --cached --quiet || git commit -m "review: rebuttal experiments"`.
+Commit: `git add results.tsv autoresearch.md nanoresearch.json && { git diff --cached --quiet || git commit -m "review: rebuttal experiments"; }`.
 
 ### Step 2c: Structured Paper Revision (`sub_phase: "rebuttal_revision"`)
 
 Do NOT edit the paper in a single monolithic pass. Use the write phase's section-by-section machinery:
 
-1. **Identify impacted sections** from the rebuttal plan + new results.tsv rows. Always revisit: experiments, introduction, conclusion, abstract. Revisit method only if protocol changed. Revisit related_work only if positioning/novelty claim changed. Apply dependency closure: if experiments changes → force revisit introduction, conclusion, abstract; if method changes → force revisit experiments + all downstream (see write.md revision mode for full rules). **Persist** the impacted set in `review_state.rebuttal_revision_progress: {current_section: 0, impacted_sections: [...]}`.
+1. **Identify impacted sections** from the rebuttal plan + new results.tsv rows. Always revisit: experiments, introduction, conclusion, abstract. Revisit method only if protocol changed. Revisit related_work only if positioning/novelty claim changed. Apply dependency closure: if experiments is in the impacted set → force include introduction, conclusion, abstract; if method is in the impacted set → force include experiments + all downstream; if related_work is in the impacted set → force include introduction (contribution framing depends on positioning). **Persist** the impacted set in `review_state.rebuttal_revision_progress: {current_section: 0, impacted_sections: [...]}`. **Commit immediately:** `git add nanoresearch.json && git commit -m "review: computed rebuttal impacted sections"`. This makes the computed set durable and prevents non-deterministic recomputation on crash-resume.
 
-2. **No-new-results disclosure:** Before editing, check `results_row_at_cycle_start`. If no new `keep` rows were added since the cycle began and the rebuttal plan contained `experiment_gap` items, note this explicitly in the experiments section ("We attempted X but found no improvement") rather than fabricating claims. Same honesty rule as write.md revision mode.
+2. **No-new-results disclosure:** Before editing, check `review_state.results_row_at_cycle_start`. If null, first attempt to reconstruct from the git commit at the cycle's review entry; if impossible, default to `0` (treat all post-baseline rows as potentially new — this is conservative in the correct direction) and log a warning. If no new `keep` rows were added since the cycle began and the rebuttal plan contained `experiment_gap` items, note this explicitly in the experiments section ("We attempted X but found no improvement") rather than fabricating claims. Same honesty rule as write.md revision mode. **Update metrics:** After rebuttal experiments, always recompute `iteration_count` from the max `#` in `results.tsv` (regardless of whether metrics improved). Parse `results.tsv` for the best `keep` row metric; if improved, update `nanoresearch.json.best_metric`.
 
 3. **Edit each impacted section in-place.** For each section at index `i` in SECTION_ORDER (0 through 5): if `i` is NOT in `rebuttal_revision_progress.impacted_sections`, skip. Otherwise:
    - If `review_state.rebuttal_revision_progress.current_section > i`, skip (already done on prior run).
@@ -152,7 +158,7 @@ Do NOT edit the paper in a single monolithic pass. Use the write phase's section
    - Submit to GPT-5.4 via `mcp__codex__codex` at `xhigh` for per-section review (same protocol as write.md Step 3). Prompt includes: section text, relevant reviewer weaknesses, new results, instruction to check claim-evidence alignment.
    - **Codex fallback:** If Codex MCP unavailable OR `codex: off`, spawn a Claude `write-critic` subagent in section mode.
    - Fix blocking issues. One review round per section.
-   - **Update progress:** `review_state.rebuttal_revision_progress.current_section = i + 1`. Commit `nanoresearch.json`.
+   - **Update progress and commit section:** `review_state.rebuttal_revision_progress.current_section = i + 1`. `git add paper/sections/{name}.tex nanoresearch.json && git commit -m "review: rebuttal revision section {name}"`. This per-section commit prevents crash from losing prior section edits.
 
 4. **Compile**: `cd paper && ${COMPILER} -pdf -interaction=nonstopmode main.tex`. Retry up to MAX_COMPILE_ATTEMPTS. Compile failure is non-fatal — rescoring reads .tex source.
 
@@ -220,6 +226,11 @@ You are R{N} ({persona}). Re-evaluate this paper after the author's rebuttal.
 [1-3 sentences]
 </output_contract>
 
+<calibration>
+Scores 4-7 are typical. 5=borderline reject, 6=weak accept, 7=accept.
+Do not inflate. Do not go above 7 unless exceptional or below 3 unless fundamentally flawed.
+</calibration>
+
 <constraints>
 - Raise score ONLY if your concerns were genuinely addressed with evidence.
 - Do not change score out of politeness.
@@ -238,19 +249,19 @@ Retry failures once, then fall back to Claude subagent.
 - Update `review_state.scores.post_rebuttal.R<N>`.
 - Commit after each: `git add AUTO_REVIEW.md paper/reviews/ nanoresearch.json && git commit -m "review: R<N> rescoring"`.
 
-**For any reviewer who fails rescoring after all retries, carry forward their initial score as their post-rebuttal score** (conservative: assume no improvement). Fill `review_state.scores.post_rebuttal.R<N>` from `review_state.scores.initial.R<N>`. The coverage-based minimum-panel rule applies to the initial panel, not rescoring — if the initial panel met coverage, rescoring proceeds with inherited scores for failed reviewers.
+**For any reviewer who fails rescoring after all retries, carry forward their initial score as their post-rebuttal score** (conservative: assume no improvement). Fill `review_state.scores.post_rebuttal.R<N>` from `review_state.scores.initial.R<N>` and flag it as `"inherited"`. The coverage-based minimum-panel rule applies to the initial panel, not rescoring — if the initial panel met coverage, rescoring proceeds with inherited scores for failed reviewers. **Inherited score veto guard:** When computing `any_post_rebuttal_score <= STRONG_REJECT_VETO`, exclude inherited scores — the reviewer did not have the opportunity to re-evaluate after seeing the rebuttal. Pass this exclusion to the AC.
 
 Update `nanoresearch.json`: `review_state.sub_phase: "area_chair"`.
 
-**Commit:** `git add AUTO_REVIEW.md nanoresearch.json && git commit -m "review: rescoring complete"`.
+**Commit:** `git add AUTO_REVIEW.md nanoresearch.json && { git diff --cached --quiet || git commit -m "review: rescoring complete"; }`.
 
 ## Phase 4: Area Chair Decision
 
 **Check for persisted AC output:** If `paper/reviews/cycle-{N}/area-chair.md` already exists (crash-resume after AC completed but before Phase 5), consume it instead of re-running the AC. This prevents non-deterministic regeneration.
 
-Otherwise, invoke `area-chair` agent with: all reviews (initial + updated from `paper/reviews/cycle-{N}/`), author rebuttal, paper text, `results.tsv` content, pre-computed score table `{R1: X, R2: Y, ...}` (from `review_state.scores.post_rebuttal`, falling back to `initial` for missing entries), pre-computed average (over `participating_reviewers` only — never divide by 4 if only 3 reviewed), `any_score <= STRONG_REJECT_VETO` boolean, ACCEPTANCE_THRESHOLD, STRONG_REJECT_VETO. Also include `reviewer_dispatch` so the AC knows which reviewers were cross-model vs. same-model.
+Otherwise, invoke `area-chair` agent with: all reviews (initial + updated from `paper/reviews/cycle-{N}/`), author rebuttal, paper text, `results.tsv` content, pre-computed score table `{R1: X, R2: Y, ...}` (from `review_state.scores.post_rebuttal`, falling back to `initial` for missing entries), pre-computed average (over `participating_reviewers` only — never divide by 4 if only 3 reviewed), `any_post_rebuttal_score <= STRONG_REJECT_VETO` boolean (use **post-rebuttal** scores only for this check — initial scores are NOT authoritative for the veto rule), ACCEPTANCE_THRESHOLD, STRONG_REJECT_VETO. Also include `reviewer_dispatch` so the AC knows which reviewers were cross-model vs. same-model. **If `review_state.cycle > 1`**, also pass `EXPERIMENT_SPEC.md`'s `## Resubmission Requirements` section and instruct the AC to verify each requirement is addressed before making a decision.
 
-**Score average:** Compute as arithmetic mean over reviewers in `participating_reviewers` only. Use `post_rebuttal` scores where available, `initial` scores for any reviewer missing from `post_rebuttal`. Never include reviewers who have no score at all. If fewer than 3 reviewers have scores, decision is "rejected" (insufficient panel).
+**Score average:** Compute as arithmetic mean over reviewers in `participating_reviewers` only. Use `post_rebuttal` scores where available, `initial` scores for any reviewer missing from `post_rebuttal`. Never include reviewers who have no score at all. If fewer than 3 reviewers have scores, set `status: "failed"` (insufficient panel — do NOT convert to `decision: "rejected"`).
 
 AC produces: meta-review, decision (ACCEPT/REJECT), if reject → top 3 actionable resubmission requirements (each must be specific and measurable — not vague). Each requirement must specify (a) a specific change and (b) a measurable criterion for success. Items like "improve X" without specifying what to change or how to measure success are vague and must be re-prompted once.
 
@@ -260,7 +271,7 @@ AC produces: meta-review, decision (ACCEPT/REJECT), if reject → top 3 actionab
 
 ## Phase 5: Record Decision
 
-Append cycle summary **under the existing `## Submission Cycle {N}` header** (created in Phase 1). Do NOT create a new top-level `## Submission Cycle N` header — one already exists. Append these sub-sections:
+**Idempotency check:** Before appending, check if `### Cycle {N} Summary` already exists in `AUTO_REVIEW.md`. If present, skip the append (already recorded on a prior crash-resume run). Otherwise, append cycle summary **under the existing `## Submission Cycle {N}` header** (created in Phase 1). Do NOT create a new top-level `## Submission Cycle N` header — one already exists. Append these sub-sections:
 
 ```markdown
 ### Cycle {N} Summary

@@ -23,9 +23,9 @@ Cap resource usage: max 10 WebSearch queries total, max 15 abstracts read, max 5
 Check `nanoresearch.json.scout_state`:
 - If `sub_phase == "survey"` → start Phase 1 (delete stale `LANDSCAPE.md`).
 - If `sub_phase == "ideate"` and `LANDSCAPE.md` exists → skip to Phase 2.
-- If `sub_phase == "ideate"` and `LANDSCAPE.md` does NOT exist → reset to `"survey"`, start Phase 1.
+- If `sub_phase == "ideate"` and `LANDSCAPE.md` does NOT exist → reset to `{sub_phase: "survey", novelty_confidence: "high"}`, start Phase 1.
 - If `sub_phase == "specify"` → skip to Phase 3 (Phase 3 produces IDEA.md if it doesn't exist yet).
-- If absent or unrecognized value → initialize: `{sub_phase: "survey"}`.
+- If absent or unrecognized value → initialize: `{sub_phase: "survey", novelty_confidence: "high"}` (always initialize full schema-valid object).
 
 ## Phase 1: Survey
 
@@ -53,7 +53,7 @@ Check `nanoresearch.json.scout_state`:
 |-------|------|-----------|
 ```
 
-**Validation gate:** `LANDSCAPE.md` must contain at least 2 identifiable gaps and reference at least 5 papers. If not, retry survey with different query formulations (once). If still insufficient, proceed but set `scout_state.novelty_confidence: "low"` in `nanoresearch.json` (this propagates to write/review phases for cautious novelty claims). Default is `"high"` if the gate passes.
+**Validation gate:** `LANDSCAPE.md` must contain at least 2 identifiable gaps and reference at least 5 papers. If not, retry survey with different query formulations (once). If still insufficient, proceed but set `scout_state.novelty_confidence: "low"` in `nanoresearch.json` (this propagates to write/review phases for cautious novelty claims). If the gate passes, **explicitly set** `scout_state.novelty_confidence: "high"` (do not rely on default — a prior crashed run may have set it to "low").
 
 Update `nanoresearch.json`: `scout_state.sub_phase: "ideate"`. Commit: `git add LANDSCAPE.md nanoresearch.json && git commit -m "scout: landscape survey"`.
 

@@ -65,15 +65,17 @@ You will receive: ACCEPTANCE_THRESHOLD and STRONG_REJECT_VETO values, 3-4 review
 
 ## Decision Rules (in order)
 
-1. Any reviewer scored <= STRONG_REJECT_VETO → REJECT, unless the AC identifies a specific factual claim in the review that is demonstrably wrong (cite the exact claim and the contradicting evidence from results.tsv or paper text). Document the override justification. If rule 1 triggers and is not overridden, the decision is final — do not proceed to subsequent rules.
-2. Average post-rebuttal >= ACCEPTANCE_THRESHOLD → ACCEPT (only reachable if rule 1 did not trigger or was overridden)
-3. 3+ reviewers agree → follow consensus
+1. Any reviewer's **post-rebuttal** score <= STRONG_REJECT_VETO → REJECT, unless the AC identifies a specific factual claim in the review that is demonstrably wrong (cite the exact claim and the contradicting evidence from results.tsv or paper text). Use the pre-computed `any_post_rebuttal_score <= STRONG_REJECT_VETO` boolean as the sole input — initial scores visible in review text are NOT authoritative for this rule. Document the override justification. If rule 1 triggers and is not overridden, the decision is final — do not proceed to subsequent rules.
+2. Average post-rebuttal >= ACCEPTANCE_THRESHOLD AND no more than one reviewer scored below ACCEPTANCE_THRESHOLD → ACCEPT (only reachable if rule 1 did not trigger or was overridden)
+3. Majority of `participating_reviewers` agree on the same recommendation category (treating STRONG REJECT/REJECT/BORDERLINE REJECT as "reject" and BORDERLINE ACCEPT/ACCEPT/STRONG ACCEPT as "accept"; majority = >50%, i.e., 2+ of 3 or 3+ of 4) → follow consensus
 4. Split → weigh by confidence
 5. Strong rebuttal with new evidence can tip borderline to accept
+6. If no rule above produces a clear decision → REJECT. Papers must demonstrate clear merit to be accepted.
 
 ## Rules
 
 - Weight confidence. Identify reviewer errors. Be fair to authors. Actionable rejection guidance only — not vague. Read-only.
 - **Cross-reference rebuttal claims** about new experiments against `results.tsv`. Flag any claimed experiment that has no corresponding row.
 - Use the pre-computed score table and average as ground truth. Do not re-extract scores from review text.
-- Apply decision rules 1-5 in strict order. The first applicable rule determines the decision.
+- Apply decision rules 1-6 in strict order. The first applicable rule determines the decision.
+- **If cycle > 1 (resubmission):** You will receive `## Resubmission Requirements` from the previous cycle. Before making any decision, verify each requirement is ADDRESSED or UNADDRESSED. Include an explicit addressed/unaddressed table in the meta-review. Unaddressed requirements weigh against acceptance.
