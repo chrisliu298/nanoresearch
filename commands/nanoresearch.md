@@ -69,6 +69,8 @@ Update `nanoresearch.json`: `phase: "write"`, `best_metric: [value]`, `iteration
 
 **Precondition:** `results.tsv` exists with at least 2 rows (header + baseline). If missing, set `status: "failed"` and stop.
 
+Initialize `write_state: {sub_phase: "section_drafting", current_section: 0, revision_pass: 0}` in `nanoresearch.json` if not already present.
+
 Invoke `/nanoresearch:write`.
 
 If write produces `RESEARCH_MEMO.md` → update `nanoresearch.json`: `status: "completed"`, `phase: "completed"`, `decision: "memo"`. `git add RESEARCH_MEMO.md nanoresearch.json && git commit -m "write: research memo"`. Print summary and stop. (Memos skip review.)

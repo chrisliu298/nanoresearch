@@ -23,6 +23,12 @@ The algorithm of research is `propose → evaluate → keep/discard`, applied at
 - **REBUTTAL_EXPERIMENT_BUDGET_MINUTES = 30** — Wall-clock cap for experiments during rebuttal.
 - **RESUBMISSION_EXPERIMENT_BUDGET_MINUTES = 60** — Wall-clock cap for experiments after rejection.
 
+### Write Phase
+
+- **NUM_REVISION_PASSES = 2** — Whole-paper revision passes with Prism-style review. Pass 1 catches structural issues, pass 2 catches remaining presentation issues.
+- **REVISION_PANEL = 4+4** — 4 Claude write-critic subagents + 4 GPT-5.4 xhigh via relay per revision pass.
+- **SECTION_REVIEW_EFFORT = `xhigh`** — Codex effort level for per-section review during drafting.
+
 ### Paper
 
 - **COMPILER = `latexmk`**
@@ -49,6 +55,11 @@ iteration_count: number               # set after loop
 venue: string | null                   # from override, passed to write and review
 codex: "on" | "off"                    # from override, default "on"
 decision: "accepted" | "rejected" | "memo" | null
+write_state: {                         # initialized on phase: "write" entry
+  sub_phase: "section_drafting" | "revision" | "complete",
+  current_section: number,             # 0-indexed, tracks section_drafting progress
+  revision_pass: number,               # 0-indexed, incremented after each completed pass, max NUM_REVISION_PASSES
+}
 review_state: {                        # initialized on phase: "review" entry
   cycle: number,                       # starts at 1, incremented on resubmission
   sub_phase: "initial_review" | "rebuttal" | "rescoring" | "area_chair" | "decision_gate",
@@ -70,5 +81,6 @@ review_state: {                        # initialized on phase: "review" entry
 | `results.tsv` | loop | write, review | Columns: #, timestamp, commit, metric, sanity, status, description. Committed at phase boundaries and every 10 loop iterations |
 | `autoresearch.md` | loop | loop (resume), write (fallback) | Recovery doc, evolves during loop |
 | `paper/main.tex` | write | review | Paper source (reviewers read .tex; PDF is compilation artifact) |
+| `paper/reviews/*.md` | write | write (resume) | Per-section and per-pass review artifacts; raw reviewer feedback on disk, not in nanoresearch.json |
 | `RESEARCH_MEMO.md` | write (weak results) | orchestrator | Review skipped |
 | `AUTO_REVIEW.md` | review | orchestrator, write (revision) | Full review history |
